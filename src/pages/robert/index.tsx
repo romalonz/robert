@@ -294,7 +294,7 @@ export default function Robert() {
                 onChange={(e) => {
                   if (e.target.value !== "__current") r.setTarget(e.target.value);
                 }}
-                className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 flex-1"
+                className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 flex-1"
               >
                 {!targetInList && (
                   <option value="__current">{r.target} (not running now)</option>
@@ -307,7 +307,7 @@ export default function Robert() {
               </select>
               <button
                 onClick={r.refreshProcesses}
-                className="px-2 py-1 text-[10px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
+                className="h-7 px-2 text-[10px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
                 title="Refresh list of audio apps"
               >
                 ↻
@@ -320,13 +320,15 @@ export default function Robert() {
               : "captures that app's whole audio output"}
           </span>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <label className="flex flex-col gap-1 flex-1 min-w-[140px]">
-            <span className="text-[10px] text-neutral-400">Brain</span>
+        <div className="flex gap-2 items-end flex-wrap">
+          <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
+            <span className="text-[10px] text-neutral-400 truncate leading-4">
+              Brain
+            </span>
             <select
               value={r.provider}
               onChange={(e) => r.setProvider(e.target.value as any)}
-              className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
+              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
             >
               <option value="local">Local (Ollama) — no key needed</option>
               {CLOUD_PROVIDERS.map((p) => (
@@ -337,19 +339,21 @@ export default function Robert() {
             </select>
           </label>
           {r.provider === "local" ? (
-            <label className="flex flex-col gap-1 flex-1 min-w-[150px]">
-              <span className="text-[10px] text-neutral-400">Local model (Ollama)</span>
+            <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
+              <span className="text-[10px] text-neutral-400 truncate leading-4">
+                Local model (Ollama)
+              </span>
               <input
                 value={r.localModel}
                 onChange={(e) => r.setLocalModel(e.target.value)}
                 placeholder="gemma4:12b"
-                className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
+                className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
               />
             </label>
           ) : (
             <>
-              <label className="flex flex-col gap-1 flex-1 min-w-[140px]">
-                <span className="text-[10px] text-neutral-400">
+              <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
+                <span className="text-[10px] text-neutral-400 truncate leading-4">
                   {CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.label} key
                 </span>
                 <input
@@ -359,18 +363,20 @@ export default function Robert() {
                   placeholder={
                     CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.keyHint
                   }
-                  className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
+                  className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
                 />
               </label>
-              <label className="flex flex-col gap-1 flex-1 min-w-[140px]">
-                <span className="text-[10px] text-neutral-400">Model</span>
+              <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
+                <span className="text-[10px] text-neutral-400 truncate leading-4">
+                  Model
+                </span>
                 <input
                   value={r.model}
                   onChange={(e) => r.setModel(e.target.value)}
                   placeholder={
                     CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.defaultModel
                   }
-                  className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
+                  className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
                 />
               </label>
             </>
@@ -385,7 +391,7 @@ export default function Robert() {
               value={r.customBaseUrl}
               onChange={(e) => r.setCustomBaseUrl(e.target.value)}
               placeholder="https://api.example.com/v1"
-              className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 font-mono"
+              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 font-mono"
             />
           </label>
         )}
