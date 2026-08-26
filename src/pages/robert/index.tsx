@@ -2,7 +2,7 @@
 // the top strip. The answer fills the bar; scroll down to adjust settings.
 // Content-protected (off screen shares). Everything Robert needs lives here.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRobert, CLOUD_PROVIDERS } from "@/hooks/useRobert";
 
@@ -45,6 +45,7 @@ function labelOf(root: string): string {
 
 export default function Robert() {
   const r = useRobert();
+  const [showNotes, setShowNotes] = useState(false);
 
   // Refresh the audio-app list on open so the picker is ready to use.
   useEffect(() => {
@@ -458,19 +459,31 @@ export default function Robert() {
             className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 font-mono resize-y"
           />
         </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] text-neutral-400">
-            Meeting knowledge — read-only, loaded
-            {r.groundingSource ? ` from ${r.groundingSource}` : " from the notes folder"}
-            . To change it, edit the .md files and hit Reload notes.
+        {/* Meeting knowledge receipt: one line confirming what loaded; the
+            full content is inspectable on demand, not permanently displayed. */}
+        <div className="flex items-center gap-2 text-[10px] text-neutral-500">
+          <span className="truncate">
+            {r.notes
+              ? `Meeting knowledge loaded from ${r.groundingSource} (${r.notes.length.toLocaleString()} chars)`
+              : "No meeting knowledge loaded yet — add .md files to the notes folder."}
           </span>
+          {r.notes && (
+            <button
+              onClick={() => setShowNotes((v) => !v)}
+              className="shrink-0 text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
+            >
+              {showNotes ? "Hide" : "View"}
+            </button>
+          )}
+        </div>
+        {showNotes && r.notes && (
           <textarea
-            value={r.notes || "(nothing loaded from the notes folder yet)"}
+            value={r.notes}
             readOnly
-            rows={5}
+            rows={8}
             className="bg-neutral-900/40 border border-neutral-800 rounded px-2 py-1 text-xs outline-none font-mono resize-y text-neutral-400"
           />
-        </label>
+        )}
         <span className="text-[10px] text-neutral-600">
           The local brain (default) runs fully on this machine via Ollama — no
           key, no cloud. Or bring your own key for DeepSeek, Claude, OpenAI,
