@@ -404,6 +404,23 @@ export default function Robert() {
               className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 font-mono"
             />
           </label>
+          <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
+            <span className="text-[10px] text-neutral-400">
+              Meeting knowledge source
+            </span>
+            <select
+              value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
+              onChange={(e) => r.setNotesFile(e.target.value)}
+              className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
+            >
+              <option value="">Auto — robert-brief.md, else all notes</option>
+              {r.notesList.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             onClick={r.reloadGrounding}
             className="px-2 py-1 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800"

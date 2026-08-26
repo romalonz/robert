@@ -664,18 +664,58 @@ fn gather_md(
     }
 }
 
-/// Load grounding. Priority:
-/// 1. `<notes folder>/robert-brief.md` — the distilled prep for THE meeting.
-/// 2. All .md files in the notes folder (an Obsidian vault works as-is;
-///    Notion pages arrive via Markdown export), newest first, size-capped.
-#[tauri::command]
-pub fn robert_load_grounding(notes_folder: Option<String>) -> Result<Grounding, String> {
+fn resolve_notes_folder(notes_folder: Option<String>) -> Result<(String, std::path::PathBuf), String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let folder = notes_folder
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "~/RobertNotes".into())
         .replacen('~', &home, 1);
     let base = std::path::PathBuf::from(&folder);
+    Ok((folder, base))
+}
+
+/// List the .md files in the notes folder (relative paths, newest first) so
+/// the UI can offer them as selectable meeting-knowledge sources.
+#[tauri::command]
+pub fn robert_list_notes(notes_folder: Option<String>) -> Result<Vec<String>, String> {
+    let (_, base) = resolve_notes_folder(notes_folder)?;
+    let mut notes = Vec::new();
+    gather_md(&base, &base, &mut notes);
+    notes.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    let mut rels: Vec<String> = notes.into_iter().map(|(_, rel, _)| rel).collect();
+    // stable sort: the brief bubbles to the top, the rest stay newest-first
+    rels.sort_by_key(|r| if r == "robert-brief.md" { 0 } else { 1 });
+    Ok(rels)
+}
+
+/// Load grounding. Priority:
+/// 1. An explicitly selected note file (`notes_file`, relative to the folder).
+/// 2. `<notes folder>/robert-brief.md` — the distilled prep for THE meeting.
+/// 3. All .md files in the notes folder (an Obsidian vault works as-is;
+///    Notion pages arrive via Markdown export), newest first, size-capped.
+#[tauri::command]
+pub fn robert_load_grounding(
+    notes_folder: Option<String>,
+    notes_file: Option<String>,
+) -> Result<Grounding, String> {
+    let (folder, base) = resolve_notes_folder(notes_folder)?;
+
+    // explicit selection wins; sanitized to stay inside the folder
+    if let Some(sel) = notes_file.filter(|s| !s.trim().is_empty()) {
+        let sel = sel.trim().to_string();
+        if !sel.contains("..") && !sel.starts_with('/') {
+            if let Ok(c) = std::fs::read_to_string(base.join(&sel)) {
+                let c = c.trim().to_string();
+                if !c.is_empty() {
+                    return Ok(Grounding {
+                        source: format!("{} (selected) in {}", sel, folder),
+                        content: c,
+                    });
+                }
+            }
+        }
+        // selected file gone or empty: fall through to auto
+    }
 
     let brief = base.join("robert-brief.md");
     if let Ok(c) = std::fs::read_to_string(&brief) {

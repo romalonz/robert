@@ -133,6 +133,7 @@ pub fn run() {
             robert::robert_prewarm_cache,
             robert::robert_prewarm_local,
             robert::robert_load_grounding,
+            robert::robert_list_notes,
             robert::robert_set_height,
         ])
         .setup(|app| {

@@ -202,6 +202,12 @@ export const useRobert = () => {
   const [notesFolder, setNotesFolder] = useState<string>(
     () => localStorage.getItem(LS.notesFolder) || "~/RobertNotes"
   );
+  // Optional explicit selection: ground on ONE file from the folder.
+  // "" = Auto (robert-brief.md wins, else all notes combined).
+  const [notesFile, setNotesFile] = useState<string>(
+    () => localStorage.getItem("robert.notesFile") || ""
+  );
+  const [notesList, setNotesList] = useState<string[]>([]);
   const [partial, setPartial] = useState("");
   const [lastTurn, setLastTurn] = useState("");
   const [suggestion, setSuggestion] = useState("");
@@ -226,6 +232,8 @@ export const useRobert = () => {
   const exaKeyRef = useRef(exaKey);
   const notesFolderRef = useRef(notesFolder);
   notesFolderRef.current = notesFolder;
+  const notesFileRef = useRef(notesFile);
+  notesFileRef.current = notesFile;
   modeRef.current = mode;
   providerRef.current = provider;
   cloudKeysRef.current = cloudKeys;
@@ -280,6 +288,7 @@ export const useRobert = () => {
     () => localStorage.setItem("robert.customBaseUrl", customBaseUrl),
     [customBaseUrl]
   );
+  useEffect(() => localStorage.setItem("robert.notesFile", notesFile), [notesFile]);
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
   useEffect(() => localStorage.setItem(LS.exakey, exaKey), [exaKey]);
   useEffect(() => localStorage.setItem("robert.persona", persona), [persona]);
@@ -679,9 +688,15 @@ export const useRobert = () => {
   // else all .md files in the folder (Obsidian vault friendly).
   const reloadGrounding = useCallback(async () => {
     try {
+      // refresh the selectable file list alongside the content
+      invoke<string[]>("robert_list_notes", {
+        notesFolder: notesFolderRef.current,
+      })
+        .then(setNotesList)
+        .catch(() => setNotesList([]));
       const g = await invoke<{ source: string; content: string }>(
         "robert_load_grounding",
-        { notesFolder: notesFolderRef.current }
+        { notesFolder: notesFolderRef.current, notesFile: notesFileRef.current }
       );
       setNotes(g.content);
       // update the ref immediately so a prewarm right after load (before the
@@ -699,11 +714,15 @@ export const useRobert = () => {
     reloadGrounding();
   }, [reloadGrounding]);
 
-  // Re-ground when the notes folder changes (debounced while typing a path).
+  // Re-ground when the notes folder changes (debounced while typing a path)
+  // or when a different note file is selected (immediate).
   useEffect(() => {
     const t = setTimeout(() => reloadGrounding(), 800);
     return () => clearTimeout(t);
   }, [notesFolder, reloadGrounding]);
+  useEffect(() => {
+    reloadGrounding();
+  }, [notesFile, reloadGrounding]);
 
   // Auto-start once on open if enabled.
   // The local brain needs no API key; cloud providers do.
@@ -756,6 +775,9 @@ export const useRobert = () => {
     groundingSource,
     notesFolder,
     setNotesFolder,
+    notesFile,
+    setNotesFile,
+    notesList,
     reloadGrounding,
     partial,
     lastTurn,
