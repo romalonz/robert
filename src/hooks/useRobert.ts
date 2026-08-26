@@ -62,7 +62,6 @@ const LS = {
   key: "robert.deepseekKey",
   model: "robert.model",
   grounding: "robert.grounding",
-  exakey: "robert.exakey",
   provider: "robert.provider",
   localModel: "robert.localModel",
   notesFolder: "robert.notesFolder",
@@ -186,9 +185,6 @@ export const useRobert = () => {
       ? "gemma4:12b"
       : stored;
   });
-  const [exaKey, setExaKey] = useState<string>(
-    () => localStorage.getItem(LS.exakey) || ""
-  );
   // The brain's briefing has two parts, kept separate on purpose:
   // - persona: generic behavior rules, user-editable, persisted.
   // - notes: meeting-specific knowledge, read-only here — it always comes
@@ -229,7 +225,6 @@ export const useRobert = () => {
   const localModelRef = useRef(localModel);
   const personaRef = useRef(persona);
   const notesRef = useRef(notes);
-  const exaKeyRef = useRef(exaKey);
   const notesFolderRef = useRef(notesFolder);
   notesFolderRef.current = notesFolder;
   const notesFileRef = useRef(notesFile);
@@ -242,7 +237,6 @@ export const useRobert = () => {
   localModelRef.current = localModel;
   personaRef.current = persona;
   notesRef.current = notes;
-  exaKeyRef.current = exaKey;
 
   // The full system prompt the brain receives: generic persona + whatever
   // the notes folder provided. Stable per meeting, so caching stays intact.
@@ -290,7 +284,6 @@ export const useRobert = () => {
   );
   useEffect(() => localStorage.setItem("robert.notesFile", notesFile), [notesFile]);
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
-  useEffect(() => localStorage.setItem(LS.exakey, exaKey), [exaKey]);
   useEffect(() => localStorage.setItem("robert.persona", persona), [persona]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
@@ -339,15 +332,8 @@ export const useRobert = () => {
         baseUrl,
       });
     };
-    // Research: Exa when a key is set (fast, one call); otherwise a free
-    // keyless path — DuckDuckGo snippets synthesized by the active brain.
+    // Research: keyless — DuckDuckGo snippets synthesized by the active brain.
     const research = async (query: string): Promise<string> => {
-      if (exaKeyRef.current.trim()) {
-        return await invoke<string>("robert_research", {
-          apiKey: exaKeyRef.current.trim(),
-          query,
-        });
-      }
       try {
         const snippets = await invoke<string>("robert_research_free", { query });
         return (
@@ -767,8 +753,6 @@ export const useRobert = () => {
     setCustomBaseUrl,
     localModel,
     setLocalModel,
-    exaKey,
-    setExaKey,
     persona,
     setPersona,
     notes,

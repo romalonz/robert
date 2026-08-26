@@ -375,18 +375,6 @@ export default function Robert() {
               </label>
             </>
           )}
-          <label className="flex flex-col gap-1 flex-1 min-w-[150px]">
-            <span className="text-[10px] text-neutral-400">
-              Exa key (optional — research works free without it)
-            </span>
-            <input
-              type="password"
-              value={r.exaKey}
-              onChange={(e) => r.setExaKey(e.target.value)}
-              placeholder="exa-..."
-              className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
-            />
-          </label>
         </div>
         {r.provider === "custom" && (
           <label className="flex flex-col gap-1">
@@ -402,25 +390,25 @@ export default function Robert() {
           </label>
         )}
         <div className="flex gap-2 items-end flex-wrap">
-          <label className="flex flex-col gap-1 flex-1 min-w-[220px]">
-            <span className="text-[10px] text-neutral-400">
-              Notes folder (Robert's knowledge: all .md files inside)
+          <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
+            <span className="text-[10px] text-neutral-400 truncate leading-4">
+              Notes folder (.md files)
             </span>
             <input
               value={r.notesFolder}
               onChange={(e) => r.setNotesFolder(e.target.value)}
               placeholder="~/RobertNotes"
-              className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 font-mono"
+              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 font-mono"
             />
           </label>
           <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
-            <span className="text-[10px] text-neutral-400">
+            <span className="text-[10px] text-neutral-400 truncate leading-4">
               Meeting knowledge source
             </span>
             <select
               value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
               onChange={(e) => r.setNotesFile(e.target.value)}
-              className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500"
+              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
             >
               <option value="">Auto — robert-brief.md, else all notes</option>
               {r.notesList.map((f) => (
@@ -432,12 +420,12 @@ export default function Robert() {
           </label>
           <button
             onClick={r.reloadGrounding}
-            className="px-2 py-1 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800"
+            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
             title="Reload notes from the folder"
           >
             Reload notes
           </button>
-          <label className="flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer ml-auto">
+          <label className="h-7 flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer ml-auto shrink-0">
             <input
               type="checkbox"
               checked={r.autoStart}

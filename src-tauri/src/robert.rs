@@ -1,7 +1,7 @@
 // Robert backend: run the live capture+STT engine (macOS: the robert-engine
 // sidecar; Windows: in-process, see robert_win.rs) and relay its JSON events;
-// call the LLM brain (local Ollama by default, or a cloud provider); call Exa
-// (research); and load grounding from the user's notes folder.
+// call the LLM brain (local Ollama by default, or a cloud provider); run
+// keyless web research; and load grounding from the user's notes folder.
 
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -448,11 +448,6 @@ pub async fn robert_prewarm_cache(
     Ok(())
 }
 
-#[derive(serde::Deserialize)]
-struct ExaAnswer {
-    answer: String,
-}
-
 /// Keyless research fallback: DuckDuckGo's HTML results (no API key), top
 /// snippets returned as plain text for the active brain to synthesize into a
 /// speakable line. Lower quality than Exa, but free and always available.
@@ -568,33 +563,6 @@ pub async fn robert_research_free(query: String) -> Result<String, String> {
         return Err("web search returned no readable results".into());
     }
     Ok(out.trim().to_string())
-}
-
-/// Research mode: Exa /answer (search + synthesis in one fast call).
-/// Optional — used only when an Exa key is set; otherwise the free
-/// DuckDuckGo fallback above serves research.
-#[tauri::command]
-pub async fn robert_research(api_key: String, query: String) -> Result<String, String> {
-    if api_key.trim().is_empty() {
-        return Err("missing Exa API key".into());
-    }
-    let body = serde_json::json!({ "query": query });
-    let client = reqwest::Client::new();
-    let res = client
-        .post("https://api.exa.ai/answer")
-        .header("x-api-key", api_key)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        let code = res.status();
-        let txt = res.text().await.unwrap_or_default();
-        return Err(format!("Exa {}: {}", code, txt));
-    }
-    let parsed: ExaAnswer = res.json().await.map_err(|e| e.to_string())?;
-    Ok(parsed.answer.trim().to_string())
 }
 
 /// Resize the Robert window's height to fit its content, preserving width.
