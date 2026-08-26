@@ -6,20 +6,23 @@ import { useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRobert, CLOUD_PROVIDERS } from "@/hooks/useRobert";
 
-// Friendly names for the app picker. Matching is on the bundle-id root.
+// Friendly names for the app picker. Matching is on the bundle-id root —
+// MOST SPECIFIC PATTERNS FIRST (e.g. "gotoforteams" contains "teams", so
+// GoTo must be tested before the Teams pattern).
 const KNOWN_APPS: [RegExp, string][] = [
   [/system\.audio/i, "System audio (all apps)"],
+  [/gotoforteams|logmein/i, "GoTo"],
+  [/microsoft\.rdc/i, "Microsoft Remote Desktop"],
+  [/microsoft\.edge|edgemac/i, "Edge"],
   [/teams/i, "Microsoft Teams"],
   [/brave/i, "Brave"],
   [/chrome/i, "Chrome"],
   [/zoom/i, "Zoom"],
   [/firefox/i, "Firefox"],
   [/webkit/i, "Safari (WebKit)"],
-  [/microsoft\.edge|edgemac/i, "Edge"],
   [/slack/i, "Slack"],
   [/discord/i, "Discord"],
   [/fathom/i, "Fathom"],
-  [/gotoforteams|logmein/i, "GoTo"],
   [/spotify/i, "Spotify"],
 ];
 // Helper-process suffixes collapsed into their parent app, so one app = one
@@ -27,6 +30,7 @@ const KNOWN_APPS: [RegExp, string][] = [
 // captures Brave's whole audio output (main + all helpers).
 const HELPER_SUFFIXES = new Set([
   "helper", "plugin", "renderer", "gpu", "modulehost", "utility", "service",
+  "notificationcenter", "launcher", "webview", "crashpad", "audio",
 ]);
 function rootOf(bundle: string): string {
   const parts = bundle.split(".");
@@ -48,18 +52,23 @@ export default function Robert() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // One option per app (helpers collapsed), system daemons hidden.
+  // One option per app: helpers collapsed into their root, system daemons
+  // hidden, and roots that resolve to the same friendly label merged (keep
+  // the shortest root — its substring match covers the descendants too).
   const apps = useMemo(() => {
-    const seen = new Map<string, string>();
+    const byLabel = new Map<string, string>(); // label -> shortest root
     for (const p of r.processes) {
       const root = rootOf(p.bundle);
       const key = root.toLowerCase();
       if (key.startsWith("com.apple.") && !/webkit/i.test(key)) continue;
       if (key.startsWith("com.robertapp.")) continue; // never listen to Robert itself
-      if (!seen.has(key)) seen.set(key, labelOf(root));
+      if (!key.includes(".")) continue; // bare daemon names, not real apps
+      const label = labelOf(root);
+      const existing = byLabel.get(label);
+      if (!existing || key.length < existing.length) byLabel.set(label, key);
     }
-    return [...seen.entries()]
-      .map(([value, label]) => ({ value, label }))
+    return [...byLabel.entries()]
+      .map(([label, value]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [r.processes]);
   const targetInList = apps.some((a) => a.value === r.target);
