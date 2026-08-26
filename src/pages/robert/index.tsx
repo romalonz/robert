@@ -428,14 +428,27 @@ export default function Robert() {
         </span>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] text-neutral-400">
-            Grounding (persona + notes, auto-loaded
-            {r.groundingSource ? ` from ${r.groundingSource}` : ""})
+            Persona &amp; rules (generic — yours to customize; no meeting facts
+            belong here)
           </span>
           <textarea
-            value={r.grounding}
-            onChange={(e) => r.setGrounding(e.target.value)}
-            rows={6}
+            value={r.persona}
+            onChange={(e) => r.setPersona(e.target.value)}
+            rows={5}
             className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 font-mono resize-y"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] text-neutral-400">
+            Meeting knowledge — read-only, loaded
+            {r.groundingSource ? ` from ${r.groundingSource}` : " from the notes folder"}
+            . To change it, edit the .md files and hit Reload notes.
+          </span>
+          <textarea
+            value={r.notes || "(nothing loaded from the notes folder yet)"}
+            readOnly
+            rows={5}
+            className="bg-neutral-900/40 border border-neutral-800 rounded px-2 py-1 text-xs outline-none font-mono resize-y text-neutral-400"
           />
         </label>
         <span className="text-[10px] text-neutral-600">

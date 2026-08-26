@@ -126,10 +126,13 @@ The Verdict and Why are for my eyes only. The Ask is the only part I will say.
 ## De-escalation (when tension rises)
 - Acknowledge their point first. ("I see why that's concerning.")
 - Lower the temperature. Redirect to shared goal.
-- Never argue. Probe with a question instead.
+- Never argue. Probe with a question instead.`;
 
-## MEETING KNOWLEDGE (paste your notes for this meeting below)
-`;
+// The meeting-specific knowledge is NEVER part of the persona: it is loaded
+// from the notes folder at runtime and appended under this header when the
+// prompt is composed for each request.
+const NOTES_HEADER =
+  "\n\n## MEETING KNOWLEDGE (auto-loaded from my notes folder)\n\n";
 
 // Backchannel/filler filtering lives in @/lib/conversation (tested by the
 // harness alongside the classifier and echo matcher).
@@ -186,9 +189,14 @@ export const useRobert = () => {
   const [exaKey, setExaKey] = useState<string>(
     () => localStorage.getItem(LS.exakey) || ""
   );
-  const [grounding, setGrounding] = useState<string>(
-    () => localStorage.getItem(LS.grounding) || DEFAULT_GROUNDING
+  // The brain's briefing has two parts, kept separate on purpose:
+  // - persona: generic behavior rules, user-editable, persisted.
+  // - notes: meeting-specific knowledge, read-only here — it always comes
+  //   from the .md files in the notes folder, never from the app.
+  const [persona, setPersona] = useState<string>(
+    () => localStorage.getItem("robert.persona") || DEFAULT_GROUNDING
   );
+  const [notes, setNotes] = useState<string>("");
   const [groundingSource, setGroundingSource] = useState<string>("");
   // Folder of .md files Robert grounds on (an Obsidian vault works as-is).
   const [notesFolder, setNotesFolder] = useState<string>(
@@ -213,7 +221,8 @@ export const useRobert = () => {
   const cloudModelsRef = useRef(cloudModels);
   const customBaseUrlRef = useRef(customBaseUrl);
   const localModelRef = useRef(localModel);
-  const groundingRef = useRef(grounding);
+  const personaRef = useRef(persona);
+  const notesRef = useRef(notes);
   const exaKeyRef = useRef(exaKey);
   const notesFolderRef = useRef(notesFolder);
   notesFolderRef.current = notesFolder;
@@ -223,8 +232,15 @@ export const useRobert = () => {
   cloudModelsRef.current = cloudModels;
   customBaseUrlRef.current = customBaseUrl;
   localModelRef.current = localModel;
-  groundingRef.current = grounding;
+  personaRef.current = persona;
+  notesRef.current = notes;
   exaKeyRef.current = exaKey;
+
+  // The full system prompt the brain receives: generic persona + whatever
+  // the notes folder provided. Stable per meeting, so caching stays intact.
+  const composeGrounding = () =>
+    personaRef.current +
+    (notesRef.current ? NOTES_HEADER + notesRef.current : "");
   const reqIdRef = useRef(0);
   // id of the request whose answer currently owns the main display. Answers
   // display monotonically: a finished answer newer than what is shown takes
@@ -266,7 +282,7 @@ export const useRobert = () => {
   );
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
   useEffect(() => localStorage.setItem(LS.exakey, exaKey), [exaKey]);
-  useEffect(() => localStorage.setItem(LS.grounding, grounding), [grounding]);
+  useEffect(() => localStorage.setItem("robert.persona", persona), [persona]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
 
@@ -283,7 +299,7 @@ export const useRobert = () => {
       if (prov === "local") {
         return await invoke<string>("robert_suggest_local", {
           model: localModelRef.current || "gemma4:12b",
-          system: groundingRef.current,
+          system: composeGrounding(),
           user,
         });
       }
@@ -298,7 +314,7 @@ export const useRobert = () => {
         return await invoke<string>("robert_suggest_anthropic", {
           apiKey: key,
           model: mdl || "claude-opus-5",
-          system: groundingRef.current,
+          system: composeGrounding(),
           user,
         });
       }
@@ -309,7 +325,7 @@ export const useRobert = () => {
       return await invoke<string>("robert_suggest", {
         apiKey: key,
         model: mdl,
-        system: groundingRef.current,
+        system: composeGrounding(),
         user,
         baseUrl,
       });
@@ -612,7 +628,7 @@ export const useRobert = () => {
         if (providerRef.current === "local") {
           invoke("robert_prewarm_local", {
             model: localModelRef.current || "gemma4:12b",
-            system: groundingRef.current,
+            system: composeGrounding(),
           }).catch(() => {});
         } else if (
           providerRef.current === "deepseek" &&
@@ -621,7 +637,7 @@ export const useRobert = () => {
           invoke("robert_prewarm_cache", {
             apiKey: cloudKeysRef.current.deepseek.trim(),
             model: cloudModelsRef.current.deepseek || "deepseek-chat",
-            system: groundingRef.current,
+            system: composeGrounding(),
           }).catch(() => {});
         }
       } catch (e: any) {
@@ -667,11 +683,10 @@ export const useRobert = () => {
         "robert_load_grounding",
         { notesFolder: notesFolderRef.current }
       );
-      const full = DEFAULT_GROUNDING + "\n" + g.content;
-      setGrounding(full);
+      setNotes(g.content);
       // update the ref immediately so a prewarm right after load (before the
-      // re-render commits) caches the real grounding prefix, not the default
-      groundingRef.current = full;
+      // re-render commits) caches the real grounding prefix, not a stale one
+      notesRef.current = g.content;
       setGroundingSource(g.source);
       setError(null);
     } catch (e: any) {
@@ -735,8 +750,9 @@ export const useRobert = () => {
     setLocalModel,
     exaKey,
     setExaKey,
-    grounding,
-    setGrounding,
+    persona,
+    setPersona,
+    notes,
     groundingSource,
     notesFolder,
     setNotesFolder,
