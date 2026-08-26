@@ -314,13 +314,31 @@ export const useRobert = () => {
         baseUrl,
       });
     };
-    const exa = async (query: string) => {
-      if (!exaKeyRef.current.trim())
-        throw new Error("Add your Exa API key in settings for research.");
-      return await invoke<string>("robert_research", {
-        apiKey: exaKeyRef.current.trim(),
-        query,
-      });
+    // Research: Exa when a key is set (fast, one call); otherwise a free
+    // keyless path — DuckDuckGo snippets synthesized by the active brain.
+    const research = async (query: string): Promise<string> => {
+      if (exaKeyRef.current.trim()) {
+        return await invoke<string>("robert_research", {
+          apiKey: exaKeyRef.current.trim(),
+          query,
+        });
+      }
+      try {
+        const snippets = await invoke<string>("robert_research_free", { query });
+        return (
+          await askBrain(
+            `Web search results for "${query}":\n${snippets}\n\nUsing ONLY these results, give me one short, natural, speakable line answering it. If the results don't answer it, give me the honest line I can say instead.`
+          )
+        ).trim();
+      } catch {
+        // web search unavailable (rate-limited / offline): degrade to the
+        // brain's general knowledge, honestly flagged
+        return (
+          await askBrain(
+            `I can't reach the web right now. From general knowledge, give me one short, speakable line addressing: ${query} — phrased so I'm not claiming certainty (e.g. "as far as I know", "I'll confirm the exact figure").`
+          )
+        ).trim();
+      }
     };
     // How eagerly to speak, by conversation type (or a forced manual request).
     const typeRule = force
@@ -376,7 +394,7 @@ export const useRobert = () => {
         const q = first.replace(/^\s*NEEDS_RESEARCH\s*:/i, "").trim() || turnText;
         if (id === reqIdRef.current) {
           route = "research";
-          out = await exa(q);
+          out = await research(q);
         }
       } else {
         route = "suggest";

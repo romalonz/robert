@@ -367,7 +367,9 @@ export default function Robert() {
             </>
           )}
           <label className="flex flex-col gap-1 flex-1 min-w-[150px]">
-            <span className="text-[10px] text-neutral-400">Exa key (Research)</span>
+            <span className="text-[10px] text-neutral-400">
+              Exa key (optional — research works free without it)
+            </span>
             <input
               type="password"
               value={r.exaKey}
