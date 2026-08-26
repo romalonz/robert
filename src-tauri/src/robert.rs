@@ -632,13 +632,24 @@ fn gather_md(
     }
 }
 
+const NOTES_README: &str = "# RobertNotes\n\nThis folder is Robert's knowledge. Every .md file here becomes meeting grounding.\n\n- Pick a specific file in the app's \"Meeting knowledge source\" dropdown, or leave it on Auto.\n- Auto: a file named robert-brief.md wins when present; otherwise all .md files load, newest first.\n- Keep files small and factual; exact numbers get quoted verbatim in answers.\n- This README is ignored. An Obsidian vault works too: point the app's Notes folder setting at it.\n";
+
 fn resolve_notes_folder(notes_folder: Option<String>) -> Result<(String, std::path::PathBuf), String> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    // HOME on macOS/Linux, USERPROFILE on Windows
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "no home directory found".to_string())?;
     let folder = notes_folder
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "~/RobertNotes".into())
         .replacen('~', &home, 1);
     let base = std::path::PathBuf::from(&folder);
+    // First run: create the folder and seed a README explaining how it works,
+    // so users can find it and drop notes in without reading any docs.
+    if !base.exists() {
+        let _ = std::fs::create_dir_all(&base);
+        let _ = std::fs::write(base.join("README.md"), NOTES_README);
+    }
     Ok((folder, base))
 }
 

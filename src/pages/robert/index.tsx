@@ -259,6 +259,12 @@ export default function Robert() {
         {r.running && (
           <div className="text-[11px] text-neutral-500 italic mt-1">
             {r.partial ? `…${r.partial}` : "waiting for them to speak"}
+            <span className="not-italic text-neutral-600">
+              {"  ·  heard "}
+              {r.turnsHeard}
+              {" · answered "}
+              {r.answersGiven}
+            </span>
           </div>
         )}
         {r.lastTurn && (
@@ -382,7 +388,25 @@ export default function Robert() {
               </label>
             </>
           )}
+          <button
+            onClick={r.testBrain}
+            disabled={r.brainTest.status === "testing"}
+            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50"
+            title="Send a tiny test request to the selected brain"
+          >
+            {r.brainTest.status === "testing" ? "Testing…" : "Test"}
+          </button>
         </div>
+        {r.brainTest.status === "ok" && (
+          <span className="text-[10px] text-emerald-400">
+            ✓ Brain is ready — key accepted, model replied: “{r.brainTest.detail}”
+          </span>
+        )}
+        {r.brainTest.status === "fail" && (
+          <span className="text-[10px] text-red-400">
+            ✗ Brain test failed: {r.brainTest.detail}
+          </span>
+        )}
         {r.provider === "custom" && (
           <label className="flex flex-col gap-1">
             <span className="text-[10px] text-neutral-400">

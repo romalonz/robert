@@ -206,6 +206,15 @@ export const useRobert = () => {
   const [notesList, setNotesList] = useState<string[]>([]);
   const [partial, setPartial] = useState("");
   const [lastTurn, setLastTurn] = useState("");
+  // Live diagnostics: how many turns were heard vs answered this session —
+  // tells at a glance whether transcription or the brain is the dead half.
+  const [turnsHeard, setTurnsHeard] = useState(0);
+  const [answersGiven, setAnswersGiven] = useState(0);
+  // One-shot brain/key check, surfaced inline in settings.
+  const [brainTest, setBrainTest] = useState<{
+    status: "idle" | "testing" | "ok" | "fail";
+    detail: string;
+  }>({ status: "idle", detail: "" });
   const [suggestion, setSuggestion] = useState("");
   // Recent answers, newest first, each with the turn it answered. Rapid-fire
   // questioning must not wipe the answer to the previous question. Entries
@@ -422,6 +431,7 @@ export const useRobert = () => {
             ? prev
             : [{ text: line, turn: asked.slice(-160), at: Date.now() }, ...prev].slice(0, 3)
         );
+        setAnswersGiven((n) => n + 1);
         // Monotonic display: newest finished answer takes the screen now.
         if (id > displayedIdRef.current) {
           displayedIdRef.current = id;
@@ -532,6 +542,7 @@ export const useRobert = () => {
           }
           segmentRef.current = [...segmentRef.current, t];
           setLastTurn(t);
+          setTurnsHeard((n) => n + 1);
           // Floor-yield window: answer once they actually stop, not per
           // sentence. Auto adapts to the conversation read; explicit modes
           // have fixed windows (interview answers fast, listening holds).
@@ -583,6 +594,52 @@ export const useRobert = () => {
     return () => clearInterval(t);
   }, []);
 
+  // Fire one tiny real request at the selected brain so the user gets a
+  // clear "key accepted / here's the exact error" signal before a meeting.
+  const testBrain = useCallback(async () => {
+    setBrainTest({ status: "testing", detail: "" });
+    const sys = "Reply with exactly: OK";
+    const user = "Say OK";
+    try {
+      const prov = providerRef.current;
+      let out: string;
+      if (prov === "local") {
+        out = await invoke<string>("robert_suggest_local", {
+          model: localModelRef.current || "gemma4:12b",
+          system: sys,
+          user,
+        });
+      } else if (prov === "anthropic") {
+        out = await invoke<string>("robert_suggest_anthropic", {
+          apiKey: (cloudKeysRef.current.anthropic || "").trim(),
+          model: cloudModelsRef.current.anthropic || "claude-opus-5",
+          system: sys,
+          user,
+        });
+      } else {
+        const meta = CLOUD_PROVIDERS.find((p) => p.id === prov);
+        out = await invoke<string>("robert_suggest", {
+          apiKey: (cloudKeysRef.current[prov] || "").trim(),
+          model: cloudModelsRef.current[prov] || meta?.defaultModel || "",
+          system: sys,
+          user,
+          baseUrl:
+            prov === "custom"
+              ? customBaseUrlRef.current.trim()
+              : meta?.baseUrl || "",
+        });
+      }
+      setBrainTest({ status: "ok", detail: out.slice(0, 60) });
+    } catch (e: any) {
+      setBrainTest({ status: "fail", detail: String(e).slice(0, 220) });
+    }
+  }, []);
+
+  // A different brain selection invalidates the last test result.
+  useEffect(() => {
+    setBrainTest({ status: "idle", detail: "" });
+  }, [provider]);
+
   const refreshProcesses = useCallback(async () => {
     try {
       const list = await invoke<any[]>("robert_list_processes");
@@ -604,6 +661,8 @@ export const useRobert = () => {
       setLastTurn("");
       setPartial("");
       setConvKind("");
+      setTurnsHeard(0);
+      setAnswersGiven(0);
       historyRef.current = [];
       segmentRef.current = [];
       mySuggestionsRef.current = [];
@@ -765,6 +824,10 @@ export const useRobert = () => {
     reloadGrounding,
     partial,
     lastTurn,
+    turnsHeard,
+    answersGiven,
+    brainTest,
+    testBrain,
     suggestion,
     answers,
     suggesting,

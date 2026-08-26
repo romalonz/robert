@@ -228,7 +228,10 @@ pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
         } else {
             let fresh = resampler.process(&fresh_raw);
             if !fresh.is_empty() {
-                // energy VAD: fresh-chunk mean |x| vs rolling noise floor
+                // energy VAD: absolute threshold first (speech over loopback
+                // sits well above this), rolling noise floor as the sensitive
+                // secondary. Floor-only logic goes deaf when audio is loud
+                // from the very first chunk (no quiet chunk to set the floor).
                 let avg: f32 =
                     fresh.iter().map(|x| x.abs()).sum::<f32>() / fresh.len() as f32;
                 energies.push_back(avg);
@@ -240,7 +243,7 @@ pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
                     .cloned()
                     .fold(f32::INFINITY, f32::min)
                     .max(1e-4);
-                let voice = avg > 0.005 && avg > floor * 3.0;
+                let voice = avg > 0.008 || (avg > 0.003 && avg > floor * 2.5);
                 samples16.extend_from_slice(&fresh);
 
                 if voice {
