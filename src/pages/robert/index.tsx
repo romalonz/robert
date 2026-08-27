@@ -58,6 +58,19 @@ export default function Robert() {
   // the shortest root — its substring match covers the descendants too).
   const apps = useMemo(() => {
     const byLabel = new Map<string, string>(); // label -> shortest root
+    // Common targets stay selectable even when the app isn't running yet, so
+    // a target can be picked before the meeting app launches. Marked in the
+    // label; a running app with the same label replaces the placeholder.
+    const PINNED: [string, string][] = [
+      ["Microsoft Teams", "com.microsoft.teams2"],
+      ["Zoom", "us.zoom.xos"],
+      ["Brave", "com.brave.browser"],
+      ["Chrome", "com.google.chrome"],
+      ["Safari (WebKit)", "com.apple.webkit"],
+      ["Slack", "com.tinyspeck.slackmacgap"],
+      ["Discord", "com.hnc.discord"],
+    ];
+    const running = new Set<string>();
     for (const p of r.processes) {
       const root = rootOf(p.bundle);
       const key = root.toLowerCase();
@@ -65,8 +78,12 @@ export default function Robert() {
       if (key.startsWith("com.robertapp.")) continue; // never listen to Robert itself
       if (!key.includes(".")) continue; // bare daemon names, not real apps
       const label = labelOf(root);
+      running.add(label);
       const existing = byLabel.get(label);
       if (!existing || key.length < existing.length) byLabel.set(label, key);
+    }
+    for (const [label, value] of PINNED) {
+      if (!running.has(label)) byLabel.set(`${label} (not running)`, value);
     }
     return [...byLabel.entries()]
       .map(([label, value]) => ({ value, label }))
