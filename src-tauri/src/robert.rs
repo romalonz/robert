@@ -871,12 +871,27 @@ const STOPWORDS: [&str; 60] = [
     "not", "but", "its", "it's", "we're", "i'm", "don't", "doesn't", "is", "of", "to", "in", "on",
 ];
 
+/// Light stemming so "costing"/"costs"/"cost" and "reports"/"reporting"/"report"
+/// meet in the middle. Crude on purpose: fast, dependency-free, good enough
+/// for paragraph ranking.
+fn stem(w: &str) -> String {
+    let mut s = w.to_string();
+    for suf in ["ing", "ed", "es", "s"] {
+        // keep at least 3 letters of stem ("costing" -> "cost", "asked" -> "ask")
+        if s.len() >= 3 + suf.len() && s.ends_with(suf) && !(suf == "s" && s.ends_with("ss")) {
+            s.truncate(s.len() - suf.len());
+            break;
+        }
+    }
+    s
+}
+
 fn tokens(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '.' && c != ',')
         .map(|w| w.trim_matches(|c: char| c == '.' || c == ',' || c == '\''))
         .filter(|w| w.len() > 2 && !STOPWORDS.contains(w))
-        .map(|w| w.to_string())
+        .map(stem)
         .collect()
 }
 
@@ -1274,9 +1289,9 @@ mod retrieval_live_probe {
         for q in [
             "where do the container ETAs for cargo tracking come from?",
             "what is the gotcha with the reports folder path in PowerShell?",
-            "how much did the reporting center cost us?",
+            "how much is this costing us?",
         ] {
-            let out = super::robert_retrieve_notes(None, q.to_string(), Some(1200)).unwrap();
+            let out = super::robert_retrieve_notes(None, q.to_string(), Some(2200)).unwrap();
             println!("\n=== Q: {} ===\n{}\n", q, out);
         }
     }
