@@ -181,7 +181,7 @@ Entry format:
 ### Q: <question, generalized slightly so it matches rephrasings>
 A: <the answer, in my voice, one to three sentences>
 (source: <meeting id>)
-Rules: when I actually answered (Me line), MY answer wins over Robert's suggestion; when only Robert's suggestion exists, store it marked "(suggested, not yet said)". If a question already exists, UPDATE its answer instead of adding a duplicate. Keep at most 60 entries.`,
+Rules: when I actually answered (Me line), MY answer wins over Robert's suggestion; when only Robert's suggestion exists, store it marked "(suggested, not yet said)". If a question already exists, UPDATE its answer instead of adding a duplicate. Write answers the way I speak: plain words, contractions, no corporate vocabulary (say "use", never "utilize" or "leverage"). Keep at most 60 entries.`,
   "facts.md": `File purpose: exact facts and numbers I have stated or heard, to quote verbatim later.
 Entry format: - <fact or number, exact> (source: <meeting id>)
 Rules: keep contradictions side by side with their sources rather than deleting; dedupe identical facts; keep at most 120 lines.`,
