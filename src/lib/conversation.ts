@@ -4,6 +4,9 @@
 // transcribed line is actually me reading Robert's own suggestion back.
 // Theory + taxonomy: docs/2026-08-26_conversation-intelligence-research.md
 
+import { readGroup, isQuestionLike } from "./group";
+import type { GroupRead } from "./group";
+
 export type ConvKind =
   | "briefing" // they hold the floor, long multi-sentence turns
   | "qna" // questions directed at me; an answer is owed, fast
@@ -11,7 +14,15 @@ export type ConvKind =
   | "discussion" // default back-and-forth
   | "status" // stand-up / status cadence
   | "decision" // options / approvals on the table
-  | "smalltalk"; // opening-closing ritual, no business
+  | "smalltalk" // opening-closing ritual, no business
+  // group-call reads (see ./group.ts)
+  | "handoff" // the floor is mine now: update/answer, never WAIT
+  | "checkin" // they are waiting on me ("you there?")
+  | "actionitem" // a task is being assigned to me
+  | "roundrobin" // updates from everyone; mine is coming, prepare it
+  | "room" // open question to the group, no name
+  | "addon" // someone else is answering; add only if I have something
+  | "aside"; // addressed to a named colleague: listen, do not answer
 
 export interface ConvRead {
   kind: ConvKind;
@@ -19,6 +30,20 @@ export interface ConvRead {
   holdMs: number;
   // one line injected into the prompt so the brain answers in the right shape
   hint: string;
+  // group read of the latest line (who it is addressed to, group-call move)
+  group?: GroupRead;
+  // true when Robert should not call the brain at all for this turn
+  silent?: boolean;
+}
+
+/// Who I am and who is in the room, for group-aware reads.
+export interface ConvContext {
+  // my name(s), lowercased (see parseAliases)
+  aliases: string[];
+  // colleague names heard so far this call
+  roster: string[];
+  // "one" = 1:1 call, "group" = several people, "auto" = infer from roster
+  callType: "auto" | "one" | "group";
 }
 
 export interface DialogueTurn {
@@ -44,8 +69,9 @@ const DECISION_MARKERS =
 const BRIEFING_MARKERS =
   /\b(as you can see|next slide|moving on|agenda|let me (share|show|walk)|first(ly)?,|second(ly)?,|finally,|to summarize|the (main|key) (point|thing)s?)\b/i;
 
-const ADDRESSED_TO_ME =
-  /\b(you|your|romeo)\b/i;
+// "you"/"your" means me in a 1:1; on a group call it is ambiguous and the
+// group reader decides (name match, vocative, room markers).
+const SECOND_PERSON = /\b(you|your|you'?re|yours)\b/i;
 
 function words(t: string): number {
   return t.trim().split(/\s+/).filter(Boolean).length;
@@ -60,7 +86,8 @@ function isQuestion(t: string): boolean {
 /// far side is speaking right now. Cheap, deterministic, runs on every final.
 export function readConversation(
   history: DialogueTurn[],
-  segment: string
+  segment: string,
+  ctx?: ConvContext
 ): ConvRead {
   const theirs = history.filter((t) => t.who === "them").slice(-6);
   const recentText = theirs.map((t) => t.text).concat(segment).join(" ");
@@ -69,6 +96,74 @@ export function readConversation(
     ? theirs.reduce((n, t) => n + words(t.text), 0) / theirs.length
     : 0;
   const lastTheirs = segment || theirs[theirs.length - 1]?.text || "";
+
+  // ── Group-call layer: who is this addressed to, which move is it? ──
+  const aliases = ctx?.aliases ?? [];
+  const roster = ctx?.roster ?? [];
+  const isGroup =
+    ctx?.callType === "group" || (ctx?.callType !== "one" && roster.length >= 2);
+  const oneOnOne = ctx?.callType === "one" || (!isGroup && ctx?.callType !== "group");
+  // read the LAST sentence they spoke: that is where the vocative/handoff lives
+  const lastSentence =
+    lastTheirs.split(/(?<=[.!?])\s+/).filter(Boolean).slice(-1)[0] || lastTheirs;
+  const g = readGroup(lastSentence, aliases, roster, oneOnOne);
+  if (g.addressee.to === "none" && lastSentence !== lastTheirs) {
+    // a name earlier in the turn still tells us whose turn it is
+    const whole = readGroup(lastTheirs, aliases, roster, oneOnOne);
+    if (whole.addressee.to !== "none") {
+      g.addressee = whole.addressee;
+      g.names = whole.names;
+    }
+    if (!g.signal) g.signal = whole.signal;
+  }
+  const toMe = g.addressee.to === "me";
+  const toOther = g.addressee.to === "other";
+
+  if (g.signal === "checkin" && (toMe || oneOnOne || g.addressee.to === "none")) {
+    return {
+      kind: "checkin",
+      holdMs: 150,
+      group: g,
+      hint:
+        "They are waiting on me (checking if I am there or muted). Give me the line to jump back in with: a quick 'yes, I'm here' and then answer the last question that was left open in the conversation, if there is one. Never WAIT.",
+    };
+  }
+  if (toOther) {
+    return {
+      kind: "aside",
+      holdMs: 0,
+      group: g,
+      silent: true,
+      hint: `This is addressed to ${g.addressee.name}, not me. I only listen.`,
+    };
+  }
+  if (g.signal === "handoff" && (toMe || oneOnOne || isGroup)) {
+    return {
+      kind: "handoff",
+      holdMs: 150,
+      group: g,
+      hint:
+        "The floor was just handed to ME. Give me my update or answer now, 3 to 4 short spoken sentences built from my notes: where things stand, the one number that matters, what is next, and any blocker. Never WAIT.",
+    };
+  }
+  if (g.signal === "roundrobin") {
+    return {
+      kind: "roundrobin",
+      holdMs: 300,
+      group: g,
+      hint:
+        "Updates are going around the room and my turn is coming. Prepare my status update now so it is ready when they get to me: 3 short spoken sentences from my notes, done, next, one number or blocker. Never WAIT.",
+    };
+  }
+  if (g.signal === "actionitem" && (toMe || oneOnOne)) {
+    return {
+      kind: "actionitem",
+      holdMs: 200,
+      group: g,
+      hint:
+        "They are assigning ME a task. Give me one or two sentences that accept it and pin it down: confirm what exactly and by when, or ask the one clarifying question, using what my notes say about the current state. Never WAIT.",
+    };
+  }
 
   // Priority order matters: a direct question or a challenge beats regime
   // detection because an answer is owed NOW (adjacency pair).
@@ -80,10 +175,11 @@ export function readConversation(
         "They are pushing back or skeptical. Take their point seriously in plain words (no canned opener), then answer with the specific fact or number from my notes that addresses it, or a polite probing question. Calm, never defensive.",
     };
   }
-  if (isQuestion(lastTheirs) && ADDRESSED_TO_ME.test(lastTheirs)) {
+  if (isQuestion(lastTheirs) && (toMe || (oneOnOne && SECOND_PERSON.test(lastTheirs)))) {
     return {
       kind: "qna",
       holdMs: 200,
+      group: g,
       hint:
         "They asked ME a direct question. Answer it directly and confidently now, and back it with the specific number, name, or fact from my notes. No hedging.",
     };
@@ -92,15 +188,50 @@ export function readConversation(
     return {
       kind: "smalltalk",
       holdMs: 400,
+      group: g,
       hint:
         "Small talk / greeting ritual. One brief, warm, human line matching their energy, or WAIT. No business facts.",
     };
+  }
+  if (isGroup && isQuestionLike(lastSentence) && g.addressee.to === "group") {
+    return {
+      kind: "room",
+      holdMs: 600,
+      group: g,
+      hint:
+        "An open question to the whole room, no name attached. If my notes or my area cover it, give me one line to jump in with. If it is clearly someone else's area, reply EXACTLY WAIT.",
+    };
+  }
+  if (isGroup && isQuestionLike(lastSentence) && g.addressee.to === "none") {
+    return {
+      kind: "room",
+      holdMs: 500,
+      group: g,
+      hint:
+        "A question in a group call with no name attached. If it follows something I said or lands in my area, it is mine: answer it directly with the specifics from my notes. Otherwise give me one short line I could jump in with, or reply EXACTLY WAIT if it is clearly for someone else.",
+    };
+  }
+  // Someone else is answering the open question (group call, a declarative
+  // turn right after a question that was not for me).
+  if (isGroup && !isQuestionLike(lastSentence) && words(lastSentence) >= 12) {
+    const prev = theirs[theirs.length - 1]?.text || "";
+    const prevQ = prev && prev !== lastTheirs && isQuestionLike(prev);
+    if (prevQ && !readGroup(prev, aliases, roster, false).addressee.to.startsWith("me")) {
+      return {
+        kind: "addon",
+        holdMs: 800,
+        group: g,
+        hint:
+          "Someone else is answering the last question. Give me ONE short add-on only if my notes hold a specific fact or number they missed; otherwise reply EXACTLY WAIT.",
+      };
+    }
   }
   // Long multi-sentence floor-holding = briefing/presentation by them.
   if (segWords > 60 || avgTheirWords > 45 || BRIEFING_MARKERS.test(recentText)) {
     return {
       kind: "briefing",
       holdMs: 1000,
+      group: g,
       hint:
         "They are presenting or explaining at length and just paused. Give me ONE short line for the pause: a brief acknowledgment plus one value-add, insight, or sharp question about what they said. Never a lecture. Only reply WAIT if they are obviously mid-sentence.",
     };
@@ -109,6 +240,7 @@ export function readConversation(
     return {
       kind: "decision",
       holdMs: 500,
+      group: g,
       hint:
         "A decision is on the table. If asked, ONE clear recommendation with a one-line why. No fence-sitting.",
     };
@@ -117,8 +249,9 @@ export function readConversation(
     return {
       kind: "status",
       holdMs: 500,
+      group: g,
       hint:
-        "Status-update cadence. Speak only when my area is named or a question lands; keep status lines crisp and factual.",
+        "Status-update cadence. Speak only when my area is named or a question lands; keep status lines crisp and factual. If several people are giving updates, mine should be the shortest and the most concrete.",
     };
   }
   return {

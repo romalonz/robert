@@ -234,10 +234,18 @@ export default function Robert() {
               ? "waiting for your cue"
               : r.lastRoute === "delivered"
               ? "you said it — listening"
+              : r.lastRoute === "aside"
+              ? `asked of ${r.addressedTo || "someone else"} — listening`
               : ""}
             {r.mode === "auto" && r.convKind ? (
               <span className="ml-2 text-neutral-600">
                 read: {r.convKind}
+                {r.addressedTo ? ` → ${r.addressedTo}` : ""}
+              </span>
+            ) : null}
+            {r.participants.length > 0 ? (
+              <span className="ml-2 text-neutral-600">
+                in the room: {r.participants.join(", ")}
               </span>
             ) : null}
           </span>
@@ -497,6 +505,32 @@ export default function Robert() {
           everything else.
         </span>
         <div className="flex flex-col gap-1.5 border-t border-neutral-800/50 pt-2">
+          <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-400">
+            <span className="text-[10px] uppercase tracking-wide text-neutral-600">
+              Group calls
+            </span>
+            <input
+              value={r.myName}
+              onChange={(e) => r.setMyName(e.target.value)}
+              placeholder="your first name, plus how people mishear it: Alex, Alec"
+              className="h-7 flex-1 min-w-[220px] bg-neutral-800 border border-neutral-700 rounded px-2 text-xs text-neutral-200 placeholder:text-neutral-600"
+            />
+            <select
+              value={r.callType}
+              onChange={(e) => r.setCallType(e.target.value as any)}
+              className="h-7 bg-neutral-800 border border-neutral-700 rounded px-2 text-xs text-neutral-200"
+              title="Auto switches to group once two colleagues have been addressed by name"
+            >
+              <option value="auto">call type: auto</option>
+              <option value="one">1:1 call</option>
+              <option value="group">group call</option>
+            </select>
+          </div>
+          <span className="text-[10px] text-neutral-600">
+            With your name set, Robert knows when a question is yours, when it
+            is a colleague's (it stays quiet), and when the floor is handed to
+            you (it has your update ready).
+          </span>
           <div className="flex items-center gap-4 flex-wrap text-[11px] text-neutral-400">
             <span className="text-[10px] uppercase tracking-wide text-neutral-600">
               Meeting memory

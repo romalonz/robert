@@ -11,10 +11,12 @@ import {
   readConversation,
   matchesMyLine,
   isIgnorableTurn,
+  type ConvContext,
   humanizeLine,
   DialogueTurn,
   ConvKind,
 } from "@/lib/conversation";
+import { parseAliases } from "@/lib/group";
 
 // Conversation type, which tunes how eagerly Robert speaks.
 export type RobertMode = "auto" | "interview" | "discussion" | "listening";
@@ -126,6 +128,13 @@ Each turn I tell you my read of the conversation type. Adapt the line's shape to
 - Decision on the table: ONE clear recommendation with a one-line why.
 - Status cadence: crisp factual lines, only when my area is named.
 - Small talk: brief, warm, human. No business facts.
+Group calls (several people in the "Them" lines, no speaker separation):
+- A line addressed to a colleague by name is theirs. Never answer it for them.
+- Open question to the room: one line I can jump in with if it is my area, else WAIT.
+- Someone else is already answering: one short add-on only if my notes hold something they missed, else WAIT.
+- Handoff to me ("over to you", "you're up", round-robin updates): my update, ready to say, 3 to 4 short sentences from my notes, never WAIT.
+- A task assigned to me: accept it and pin down what and when, or ask the one clarifying question.
+- "You there?" / "on mute": a quick "yes, I'm here" and then the answer to whatever was left open.
 IMPORTANT: the captured audio sometimes echoes MY OWN voice back, so some transcribed lines are ME speaking, not them. Treat a line as ME (and reply EXACTLY: WAIT) when it is a first-person statement presenting or defending MY work ("the pull is read-only", "I built", "my report") or restates my talking points from the notes below. Never respond to my own words as if they were the other side's.
 
 ## Suggest mode (default)
@@ -159,7 +168,7 @@ const NOTES_HEADER =
 // harness alongside the classifier and echo matcher).
 
 // ─── Meeting Memory prompts ──────────────────────────────────────────────────
-const SUMMARY_SYSTEM = `You write meeting takeaways from a transcript. Speakers: "Them" is the other side, "Me" is the user, "Robert (suggested)" is a line the user's copilot proposed (the user may or may not have said it).
+const SUMMARY_SYSTEM = `You write meeting takeaways from a transcript. Speakers: "Them" is the other side, "Me" is the user, "Robert (suggested)" is a line the user's copilot proposed (the user may or may not have said it). On a group call, "Them" mixes several people: attribute a line to a named participant only when the transcript makes it clear (they were addressed by name, introduced themselves, or were thanked), otherwise say "a participant". Action items and questions addressed to the user by name belong to the user.
 Output Markdown with EXACTLY these sections, in this order, and nothing else:
 # <short meeting title> (<date>)
 ## Decisions
@@ -249,9 +258,24 @@ export const useRobert = () => {
   // - persona: generic behavior rules, user-editable, persisted.
   // - notes: meeting-specific knowledge, read-only here — it always comes
   //   from the .md files in the notes folder, never from the app.
-  const [persona, setPersona] = useState<string>(
-    () => localStorage.getItem("robert.persona") || DEFAULT_GROUNDING
+  const [persona, setPersona] = useState<string>(() => {
+    // Follow the app's default persona across updates unless the user edited
+    // it: "personaBase" records the default that was current when it was
+    // saved, so stored === base means "never customized".
+    const stored = localStorage.getItem("robert.persona");
+    const base = localStorage.getItem("robert.personaBase");
+    if (!stored || !base || stored === base) return DEFAULT_GROUNDING;
+    return stored;
+  });
+  // Group calls: my name (plus how people mispronounce it) and the call type.
+  const [myName, setMyName] = useState<string>(
+    () => localStorage.getItem("robert.myName") || ""
   );
+  const [callType, setCallType] = useState<"auto" | "one" | "group">(
+    () => (localStorage.getItem("robert.callType") as any) || "auto"
+  );
+  const [participants, setParticipants] = useState<string[]>([]); // names heard this call
+  const [addressedTo, setAddressedTo] = useState<string>(""); // who the last line was for
   const [notes, setNotes] = useState<string>("");
   const [groundingSource, setGroundingSource] = useState<string>("");
   // Folder of .md files Robert grounds on (an Obsidian vault works as-is).
@@ -312,6 +336,19 @@ export const useRobert = () => {
   const recordMeetingsRef = useRef(recordMeetings);
   recordMeetingsRef.current = recordMeetings;
   const useMemoryRef = useRef(useMemory);
+  const myNameRef = useRef(myName);
+  myNameRef.current = myName;
+  const callTypeRef = useRef(callType);
+  callTypeRef.current = callType;
+  const rosterRef = useRef<string[]>([]); // colleague names heard this call
+  const convCtx = (): ConvContext => ({
+    aliases: parseAliases(myNameRef.current),
+    roster: rosterRef.current,
+    callType: callTypeRef.current,
+  });
+  const isGroupCall = () =>
+    callTypeRef.current === "group" ||
+    (callTypeRef.current === "auto" && rosterRef.current.length >= 2);
   useMemoryRef.current = useMemory;
   modeRef.current = mode;
   providerRef.current = provider;
@@ -373,7 +410,12 @@ export const useRobert = () => {
   );
   useEffect(() => localStorage.setItem("robert.useMemory", useMemory ? "1" : "0"), [useMemory]);
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
-  useEffect(() => localStorage.setItem("robert.persona", persona), [persona]);
+  useEffect(() => {
+    localStorage.setItem("robert.persona", persona);
+    if (persona === DEFAULT_GROUNDING) localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
+  }, [persona]);
+  useEffect(() => localStorage.setItem("robert.myName", myName), [myName]);
+  useEffect(() => localStorage.setItem("robert.callType", callType), [callType]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
 
@@ -503,9 +545,23 @@ export const useRobert = () => {
       }
       const recentLines = mySuggestionsRef.current.slice(-2);
       // conversation read: auto mode adapts; explicit modes keep their rule
-      const read = readConversation(historyRef.current, segment);
+      const read = readConversation(historyRef.current, segment, convCtx());
       const readHint =
         type === "auto" ? `My read of the conversation: ${read.hint}\n` : "";
+      // Group call: several people share the "Them" lines; say who I am, who
+      // is in the room, and who this line is for, so Robert only speaks for me.
+      const aliases = parseAliases(myNameRef.current);
+      const who = read.group?.addressee;
+      const groupBlock = isGroupCall()
+        ? `GROUP CALL: the "Them" lines mix several people (the transcript does not separate speakers). ` +
+          (aliases.length ? `I am ${myNameRef.current.split(/[,;/]/)[0].trim()}. ` : "") +
+          (rosterRef.current.length ? `People heard so far: ${rosterRef.current.join(", ")}. ` : "") +
+          `This line is addressed to: ${
+            who?.to === "me" ? "me" : who?.to === "other" ? who.name : who?.to === "group" ? "the whole room" : "no one in particular"
+          }. Only ever speak for me; never answer on a colleague's behalf.\n`
+        : aliases.length
+        ? `My name is ${myNameRef.current.split(/[,;/]/)[0].trim()}.\n`
+        : "";
       const prompt =
         (hist ? `Conversation so far (Them = the other side, Me = me):\n${hist}\n\n` : "") +
         (myLastLineRef.current
@@ -518,6 +574,7 @@ export const useRobert = () => {
         (recentLines.length
           ? `Recent lines I already have (do not repeat their wording or shape):\n${recentLines.map((l) => `- ${l}`).join("\n")}\n\n`
           : "") +
+        groupBlock +
         readHint +
         `${typeRule}\n` +
         `- They have already paused by the time you see this. Reply EXACTLY WAIT only if they are clearly mid-thought, or the text sounds like my own voice echoed back. When in doubt, give me a line.\n` +
@@ -699,10 +756,42 @@ export const useRobert = () => {
           else {
             const read = readConversation(
               historyRef.current,
-              segmentRef.current.join(" ")
+              segmentRef.current.join(" "),
+              convCtx()
             );
             setConvKind(read.kind);
             holdMs = read.holdMs;
+            // roster: colleagues heard this call (for group detection + summary)
+            const names = read.group?.names ?? [];
+            if (names.length) {
+              const merged = [...rosterRef.current];
+              for (const n of names) if (!merged.includes(n)) merged.push(n);
+              if (merged.length !== rosterRef.current.length) {
+                rosterRef.current = merged;
+                setParticipants(merged);
+              }
+            }
+            const who = read.group?.addressee;
+            setAddressedTo(
+              who?.to === "me" ? "you" : who?.to === "other" ? who.name || "" : who?.to === "group" ? "the room" : ""
+            );
+            if (read.silent) {
+              // Addressed to a named colleague: listen, do not answer. Close
+              // the segment into history so the exchange stays in context
+              // for "anything to add?" a moment later.
+              clearHold();
+              const closed = segmentRef.current.join(" ").trim();
+              if (closed) {
+                historyRef.current = [
+                  ...historyRef.current,
+                  { who: "them" as const, text: closed },
+                ].slice(-12);
+              }
+              segmentRef.current = [];
+              partialRef.current = "";
+              setLastRoute("aside");
+              break;
+            }
           }
           armHold(t, holdMs);
           break;
@@ -863,6 +952,9 @@ export const useRobert = () => {
       setLastTurn("");
       setPartial("");
       setConvKind("");
+      rosterRef.current = [];
+      setParticipants([]);
+      setAddressedTo("");
       setTurnsHeard(0);
       setAnswersGiven(0);
       historyRef.current = [];
@@ -1024,6 +1116,12 @@ export const useRobert = () => {
     setMode,
     lastRoute,
     convKind,
+    addressedTo,
+    participants,
+    myName,
+    setMyName,
+    callType,
+    setCallType,
     autoStart,
     setAutoStart,
     provider,
