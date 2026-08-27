@@ -343,7 +343,7 @@ async fn ollama_chat(
         "options": {
             "num_ctx": local_num_ctx(system),
             "num_predict": num_predict,
-            "temperature": 0.4
+            "temperature": 0.6
         }
     });
     let client = reqwest::Client::builder()
@@ -857,6 +857,175 @@ mod meeting_tests {
     }
 }
 
+
+// ─── Per-turn retrieval ──────────────────────────────────────────────────────
+// For each question, pull the most relevant paragraphs from EVERY note in the
+// folder (brief, handover docs, meeting takeaways, memory) into the prompt.
+// Depth without prompt bloat: a few paragraphs, not whole files.
+
+const STOPWORDS: [&str; 60] = [
+    "the", "and", "for", "that", "this", "with", "you", "your", "are", "was", "were", "have",
+    "has", "had", "what", "when", "where", "which", "who", "why", "how", "does", "did", "will",
+    "would", "could", "should", "can", "our", "their", "they", "them", "there", "here", "about",
+    "from", "into", "than", "then", "also", "just", "like", "much", "many", "some", "any", "all",
+    "not", "but", "its", "it's", "we're", "i'm", "don't", "doesn't", "is", "of", "to", "in", "on",
+];
+
+fn tokens(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '.' && c != ',')
+        .map(|w| w.trim_matches(|c: char| c == '.' || c == ',' || c == '\''))
+        .filter(|w| w.len() > 2 && !STOPWORDS.contains(w))
+        .map(|w| w.to_string())
+        .collect()
+}
+
+/// Split a note into paragraph-sized chunks (blank-line separated; bullet runs
+/// stay together), each tagged with its nearest heading for context.
+fn chunk_note(text: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut heading = String::new();
+    let mut cur = String::new();
+    let flush = |cur: &mut String, heading: &str, chunks: &mut Vec<String>| {
+        let c = cur.trim();
+        if c.len() > 30 {
+            chunks.push(if heading.is_empty() { c.to_string() } else { format!("{}\n{}", heading, c) });
+        }
+        cur.clear();
+    };
+    for line in text.lines() {
+        let l = line.trim_end();
+        if l.starts_with('#') {
+            flush(&mut cur, &heading, &mut chunks);
+            heading = l.trim_start_matches('#').trim().to_string();
+            continue;
+        }
+        if l.trim().is_empty() {
+            flush(&mut cur, &heading, &mut chunks);
+            continue;
+        }
+        cur.push_str(l);
+        cur.push('\n');
+        if cur.len() > 1200 {
+            flush(&mut cur, &heading, &mut chunks);
+        }
+    }
+    flush(&mut cur, &heading, &mut chunks);
+    chunks
+}
+
+fn score_chunk(query: &[String], chunk: &str) -> f32 {
+    if query.is_empty() {
+        return 0.0;
+    }
+    let ct = tokens(chunk);
+    if ct.is_empty() {
+        return 0.0;
+    }
+    let set: std::collections::HashSet<&str> = ct.iter().map(|s| s.as_str()).collect();
+    let mut hits = 0usize;
+    let mut num_hits = 0usize;
+    let mut seen = std::collections::HashSet::new();
+    for q in query {
+        if !seen.insert(q.as_str()) {
+            continue;
+        }
+        if set.contains(q.as_str()) {
+            hits += 1;
+            if q.chars().any(|c| c.is_ascii_digit()) {
+                num_hits += 1;
+            }
+        }
+    }
+    if hits == 0 {
+        return 0.0;
+    }
+    let uniq_q = seen.len().max(1) as f32;
+    // coverage of the question, small bonus for numbers, mild length penalty
+    hits as f32 / uniq_q + 0.3 * num_hits as f32 - (ct.len() as f32 / 4000.0)
+}
+
+/// Top-k relevant paragraphs across all notes for `query`, formatted for the prompt.
+#[tauri::command]
+pub fn robert_retrieve_notes(
+    notes_folder: Option<String>,
+    query: String,
+    max_chars: Option<usize>,
+) -> Result<String, String> {
+    let (_, base) = resolve_notes_folder(notes_folder)?;
+    let q = tokens(&query);
+    if q.is_empty() {
+        return Ok(String::new());
+    }
+    let mut files = Vec::new();
+    gather_md(&base, &base, &mut files); // skips meetings/ and memory/; memory rides separately
+    // memory files are worth searching too
+    for name in MEMORY_FILES {
+        if let Ok(c) = std::fs::read_to_string(base.join("memory").join(name)) {
+            files.push((std::time::SystemTime::UNIX_EPOCH, format!("memory/{}", name), c));
+        }
+    }
+    let mut scored: Vec<(f32, String, String)> = Vec::new();
+    for (_, rel, content) in &files {
+        for ch in chunk_note(content) {
+            let sc = score_chunk(&q, &ch);
+            if sc > 0.34 {
+                scored.push((sc, rel.clone(), ch));
+            }
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let cap = max_chars.unwrap_or(2200);
+    let mut out = String::new();
+    for (_, rel, ch) in scored.into_iter().take(6) {
+        let block = format!("### {}\n{}\n\n", rel, ch.trim());
+        if out.len() + block.len() > cap {
+            break;
+        }
+        out.push_str(&block);
+    }
+    Ok(out.trim().to_string())
+}
+
+/// Write a top-level note into the notes folder (e.g. meeting takeaways), so
+/// it shows up in the Meeting knowledge picker like any other note.
+#[tauri::command]
+pub fn robert_write_note(notes_folder: Option<String>, name: String, content: String) -> Result<String, String> {
+    let (_, base) = resolve_notes_folder(notes_folder)?;
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .collect();
+    if !safe.ends_with(".md") || safe.starts_with('.') || safe.eq_ignore_ascii_case("readme.md") {
+        return Err("invalid note name".into());
+    }
+    std::fs::write(base.join(&safe), content).map_err(|e| e.to_string())?;
+    Ok(safe)
+}
+
+#[cfg(test)]
+mod retrieval_tests {
+    use super::*;
+
+    #[test]
+    fn picks_the_paragraph_that_answers_the_question() {
+        let note = "# Handover\n\nSeven reports are built on the VDI from Epicor BAQ extracts.\n\n## Paths\nEverything publishes to the BWF Insights folder; the [DEV] brackets need -LiteralPath in PowerShell.\n\n## Cargo tracking\nContainer ETAs come from the Vizion API via Playwright, written to Cargo_Tracking_Report.xlsx.\n";
+        let chunks = chunk_note(note);
+        assert_eq!(chunks.len(), 3);
+        let q = tokens("where do the container ETAs come from?");
+        let mut best = chunks.iter().map(|c| (score_chunk(&q, c), c.clone())).collect::<Vec<_>>();
+        best.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        assert!(best[0].1.contains("Vizion"), "got {:?}", best[0]);
+        assert!(best[0].0 > 0.34);
+    }
+
+    #[test]
+    fn unrelated_paragraphs_score_zero() {
+        let q = tokens("what does the snapshot retention look like?");
+        assert_eq!(score_chunk(&q, "Good morning everyone, thanks for joining."), 0.0);
+    }
+}
+
 /// Resize the Robert window's height to fit its content, preserving width.
 #[tauri::command]
 pub fn robert_set_height(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
@@ -962,19 +1131,6 @@ pub fn robert_list_notes(notes_folder: Option<String>) -> Result<Vec<String>, St
     let mut rels: Vec<String> = notes.into_iter().map(|(_, rel, _)| rel).collect();
     // stable sort: the brief bubbles to the top, the rest stay newest-first
     rels.sort_by_key(|r| if r == "robert-brief.md" { 0 } else { 1 });
-    // meeting summaries, newest first, so "ground me on last Tuesday's meeting"
-    // is one pick away
-    let mut sums: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(base.join("meetings")) {
-        for e in entries.flatten() {
-            if e.path().join("summary.md").exists() {
-                sums.push(format!("meetings/{}/summary.md", e.file_name().to_string_lossy()));
-            }
-        }
-    }
-    sums.sort();
-    sums.reverse();
-    rels.extend(sums);
     Ok(rels)
 }
 

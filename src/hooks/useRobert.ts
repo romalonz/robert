@@ -97,7 +97,8 @@ export const DEFAULT_GROUNDING = `You are Robert, my discreet meeting teammate a
 ## Hard rules (always)
 - First person, speakable, plain English.
 - Sound like a person on a call, not a model. The exact rules are in "How I actually talk" below and they override everything else about style.
-- One to three short sentences. Lead with the direct answer, then back it with the CONCRETE SPECIFICS from my notes whenever they exist: the number, the name, the date, how it actually works. Detail beats vagueness; a specific fact beats a reassurance. But never ramble past the point.
+- One to three short sentences, up to four when they ask for detail or my notes hold several relevant specifics. Lead with the direct answer, then back it with the CONCRETE SPECIFICS from my notes: the number, the name, the date, how it actually works. When the RELEVANT NOTES section gives you two or three details that fit, use them; do not stop at the first one. Detail beats vagueness; a specific fact beats a reassurance. Never ramble past the point.
+- Vary your answers. Do not open two lines the same way, do not reuse the same sentence shape twice in a row, and never repeat a phrasing listed under "recent lines".
 - When my notes contain a number relevant to the question, the answer MUST include it, quoted exactly as written (row counts, dollars, times, percentages). Never round it away, never replace it with "several" or "significant".
 - If they stacked multiple questions in one go, answer EACH one briefly, in the order asked. Do not drop any of them.
 - No em dashes. No timelines or time estimates. No bullet points.
@@ -171,7 +172,9 @@ Output Markdown with EXACTLY these sections, in this order, and nothing else:
 ## Open questions and follow-ups
 ## People
 (who spoke, what they care about, how they push)
-Rules: use only what the transcript contains, write "none" for empty sections, never invent, plain English, no em dashes, no preamble.`;
+## AI insights
+(3 to 6 bullets that go beyond the transcript: patterns in how they push, where my answers were thin or weaker than Robert's suggestion, risks or objections likely to come back, what to prepare or have numbers for next time; mark each as an inference, not a fact)
+Rules: use only what the transcript contains for every section except AI insights, write "none" for empty sections, never invent facts, plain English, no em dashes, no preamble.`;
 
 const MERGE_SYSTEM = `You maintain one Markdown memory file for a meeting copilot. You receive the CURRENT FILE and a NEW MEETING SUMMARY. Return the COMPLETE updated file content and nothing else (no commentary, no code fences). Merge, do not append blindly: ADD new items, UPDATE an existing item when the new information is newer or better phrased, DELETE only when clearly superseded, keep everything else unchanged. Keep entries newest-first. Every entry ends with a source in parentheses: (source: <meeting id>). If the summary adds nothing relevant, return exactly: NOOP`;
 
@@ -477,6 +480,24 @@ export const useRobert = () => {
       const segment = (segmentRef.current.join(" ") + " " + partialRef.current)
         .trim()
         .slice(-6000);
+      // Per-turn retrieval: the paragraphs across ALL notes that best match
+      // what they are asking, so the answer can dig into the references
+      // instead of skimming one file. Goes in the user turn (system stays
+      // stable for caching). Fast local scan; skipped for tiny fragments.
+      let relevant = "";
+      const q = (segment || turnText).slice(-500);
+      if (q.split(/\s+/).length >= 3) {
+        try {
+          relevant = await invoke<string>("robert_retrieve_notes", {
+            notesFolder: notesFolderRef.current,
+            query: q,
+            maxChars: 2200,
+          });
+        } catch {
+          relevant = "";
+        }
+      }
+      const recentLines = mySuggestionsRef.current.slice(-2);
       // conversation read: auto mode adapts; explicit modes keep their rule
       const read = readConversation(historyRef.current, segment);
       const readHint =
@@ -487,6 +508,12 @@ export const useRobert = () => {
           ? `The last thing I said out loud: "${myLastLineRef.current}"\n\n`
           : "") +
         `The other side is saying this now. Treat it as ONE message and respond to the WHOLE thing, even if it is several sentences:\n${segment || turnText}\n\n` +
+        (relevant
+          ? `RELEVANT NOTES (pulled from my files for this question; use the specifics that fit, quote numbers exactly):\n${relevant}\n\n`
+          : "") +
+        (recentLines.length
+          ? `Recent lines I already have (do not repeat their wording or shape):\n${recentLines.map((l) => `- ${l}`).join("\n")}\n\n`
+          : "") +
         readHint +
         `${typeRule}\n` +
         `- They have already paused by the time you see this. Reply EXACTLY WAIT only if they are clearly mid-thought, or the text sounds like my own voice echoed back. When in doubt, give me a line.\n` +
@@ -774,8 +801,16 @@ export const useRobert = () => {
           return;
         }
         setPostMeeting("writing takeaways…");
-        const summary = strip(await brainCall(SUMMARY_SYSTEM, transcript.slice(-60000), 1400));
+        const summary = strip(await brainCall(SUMMARY_SYSTEM, transcript.slice(-60000), 1600));
         await invoke("robert_meeting_write", { notesFolder, dir, name: "summary.md", content: summary });
+        // The takeaways also land as a normal top-level note, so they are a
+        // first-class option in the Meeting knowledge picker and in Auto mode.
+        const meetingIdForNote = dir.split(/[\\/]/).pop() || "meeting";
+        await invoke("robert_write_note", {
+          notesFolder,
+          name: `${meetingIdForNote}_takeaways.md`,
+          content: summary,
+        }).catch(() => {});
         setPostMeeting("updating memory…");
         const meetingId = dir.split(/[\\/]/).pop() || dir;
         const mem = await invoke<Record<string, string>>("robert_read_memory", { notesFolder });

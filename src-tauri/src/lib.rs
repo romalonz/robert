@@ -142,6 +142,8 @@ pub fn run() {
             robert::robert_list_meetings,
             robert::robert_delete_meeting,
             robert::robert_open_path,
+            robert::robert_retrieve_notes,
+            robert::robert_write_note,
             robert::robert_set_height,
         ])
         .setup(|app| {
