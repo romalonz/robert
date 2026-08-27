@@ -492,6 +492,8 @@ export const useRobert = () => {
             notesFolder: notesFolderRef.current,
             query: q,
             maxChars: 2200,
+            // the note selected for this meeting (or the brief) ranks first
+            prefer: notesFileRef.current || "robert-brief.md",
           });
         } catch {
           relevant = "";

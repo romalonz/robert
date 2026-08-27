@@ -991,6 +991,7 @@ pub fn robert_retrieve_notes(
     notes_folder: Option<String>,
     query: String,
     max_chars: Option<usize>,
+    prefer: Option<String>,
 ) -> Result<String, String> {
     let (_, base) = resolve_notes_folder(notes_folder)?;
     let q = tokens(&query);
@@ -1027,6 +1028,12 @@ pub fn robert_retrieve_notes(
             let head_hits = q.iter().filter(|t| c.head.contains(t.as_str())).count();
             if head_hits > 0 {
                 sc += 0.5 * (head_hits as f32 / q.len().max(1) as f32);
+            }
+            // the note selected for THIS meeting outranks unrelated notes
+            if let Some(pref) = prefer.as_deref().filter(|p| !p.is_empty()) {
+                if c.rel == pref {
+                    sc += 0.3;
+                }
             }
             scored.push((sc, c.rel, c.text));
         }
@@ -1300,7 +1307,7 @@ mod retrieval_live_probe {
             "what is the gotcha with the reports folder path in PowerShell?",
             "how much is this costing us?",
         ] {
-            let out = super::robert_retrieve_notes(None, q.to_string(), Some(2200)).unwrap();
+            let out = super::robert_retrieve_notes(None, q.to_string(), Some(2200), Some("robert-brief.md".into())).unwrap();
             println!("\n=== Q: {} ===\n{}\n", q, out);
         }
     }
