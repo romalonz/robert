@@ -115,3 +115,19 @@ and the mic stream is transcribed on-device like everything else.
 All open source, no new services, no new keys: Whisper (already), Ollama (already), Tauri fs
 commands, Markdown. Start with Phase 1: it delivers the learning loop end to end and is pure
 frontend + a few small Rust file commands, so it ships on both platforms from one commit.
+
+## 8. Latency budget (design constraint, not an afterthought)
+
+Live answer latency must not grow as memory grows.
+
+- Logging, audio write, and recall matching are off the answer path or sub-millisecond.
+- Summary + merge run only after Stop; nothing in the meeting waits on them.
+- Grounding cost is the only risk: every +1K prompt tokens is roughly +0.3 s per answer on the
+  local brain. Therefore:
+  1. **Retrieve, don't dump.** Per turn, inject only the top-k QA entries and facts relevant to the
+     current question (same lexical matcher as instant recall; embeddings optional later).
+  2. **Hard cap** on injected memory (~2K tokens), and the merge step keeps the files deduplicated.
+  3. Instant recall returns banked answers in ~50 ms, faster than any model call.
+- Separate win to chase: Ollama currently re-evaluates the full system prompt every call (no prefix
+  cache hit observed). Fixing that makes per-turn cost = the new question only, and memory size
+  stops mattering.
