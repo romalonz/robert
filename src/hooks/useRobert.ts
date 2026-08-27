@@ -491,7 +491,9 @@ export const useRobert = () => {
           relevant = await invoke<string>("robert_retrieve_notes", {
             notesFolder: notesFolderRef.current,
             query: q,
-            maxChars: 2200,
+            // ~1400 chars ≈ 350 tokens ≈ +0.3s prompt eval on gemma4:12b; the top
+            // paragraph carries the answer, more only adds latency
+            maxChars: 1400,
             // the note selected for this meeting (or the brief) ranks first
             prefer: notesFileRef.current || "robert-brief.md",
           });

@@ -1039,9 +1039,9 @@ pub fn robert_retrieve_notes(
         }
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let cap = max_chars.unwrap_or(2200);
+    let cap = max_chars.unwrap_or(1400);
     let mut out = String::new();
-    for (_, rel, ch) in scored.into_iter().take(6) {
+    for (_, rel, ch) in scored.into_iter().take(4) {
         let block = format!("### {}\n{}\n\n", rel, ch.trim());
         if out.len() + block.len() > cap {
             break;
@@ -1307,7 +1307,7 @@ mod retrieval_live_probe {
             "what is the gotcha with the reports folder path in PowerShell?",
             "how much is this costing us?",
         ] {
-            let out = super::robert_retrieve_notes(None, q.to_string(), Some(2200), Some("robert-brief.md".into())).unwrap();
+            let out = super::robert_retrieve_notes(None, q.to_string(), Some(1400), Some("robert-brief.md".into())).unwrap();
             println!("\n=== Q: {} ===\n{}\n", q, out);
         }
     }
