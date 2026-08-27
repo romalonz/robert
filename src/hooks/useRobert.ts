@@ -22,6 +22,14 @@ export interface RobertProcess {
   pid: number;
   bundle: string;
 }
+export interface MeetingInfo {
+  id: string;
+  dir: string;
+  started: string;
+  target: string;
+  turns: number;
+  has_summary: boolean;
+}
 
 // Brain provider: "local" (Ollama, default) or one of several cloud APIs.
 export type RobertProvider =
@@ -149,6 +157,42 @@ const NOTES_HEADER =
 // Backchannel/filler filtering lives in @/lib/conversation (tested by the
 // harness alongside the classifier and echo matcher).
 
+// ─── Meeting Memory prompts ──────────────────────────────────────────────────
+const SUMMARY_SYSTEM = `You write meeting takeaways from a transcript. Speakers: "Them" is the other side, "Me" is the user, "Robert (suggested)" is a line the user's copilot proposed (the user may or may not have said it).
+Output Markdown with EXACTLY these sections, in this order, and nothing else:
+# <short meeting title> (<date>)
+## Decisions
+## Action items
+(owner, what, and when if stated)
+## Questions asked of me
+(for each: the question; what I actually answered from Me lines, or "not captured"; what Robert suggested; and one word: used / adapted / ignored / unknown)
+## Facts and numbers stated
+(exact numbers and names as spoken)
+## Open questions and follow-ups
+## People
+(who spoke, what they care about, how they push)
+Rules: use only what the transcript contains, write "none" for empty sections, never invent, plain English, no em dashes, no preamble.`;
+
+const MERGE_SYSTEM = `You maintain one Markdown memory file for a meeting copilot. You receive the CURRENT FILE and a NEW MEETING SUMMARY. Return the COMPLETE updated file content and nothing else (no commentary, no code fences). Merge, do not append blindly: ADD new items, UPDATE an existing item when the new information is newer or better phrased, DELETE only when clearly superseded, keep everything else unchanged. Keep entries newest-first. Every entry ends with a source in parentheses: (source: <meeting id>). If the summary adds nothing relevant, return exactly: NOOP`;
+
+const MEMORY_RULES: Record<string, string> = {
+  "qa-bank.md": `File purpose: questions I get asked and MY best answer to each, so I can answer faster and in my own words next time.
+Entry format:
+### Q: <question, generalized slightly so it matches rephrasings>
+A: <the answer, in my voice, one to three sentences>
+(source: <meeting id>)
+Rules: when I actually answered (Me line), MY answer wins over Robert's suggestion; when only Robert's suggestion exists, store it marked "(suggested, not yet said)". If a question already exists, UPDATE its answer instead of adding a duplicate. Keep at most 60 entries.`,
+  "facts.md": `File purpose: exact facts and numbers I have stated or heard, to quote verbatim later.
+Entry format: - <fact or number, exact> (source: <meeting id>)
+Rules: keep contradictions side by side with their sources rather than deleting; dedupe identical facts; keep at most 120 lines.`,
+  "people.md": `File purpose: who is who across meetings.
+Entry format: - <name or role>: <what they care about, how they push, notable stances> (source: <meeting id>)
+Rules: one entry per person, UPDATE in place as new meetings add detail.`,
+  "decisions.md": `File purpose: decisions made and open items across meetings.
+Entry format: - <decision or open item> — status: decided | open | done (source: <meeting id>)
+Rules: UPDATE status when an open item is resolved; keep at most 80 lines.`,
+};
+
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("idle");
@@ -211,6 +255,17 @@ export const useRobert = () => {
   const [notesFolder, setNotesFolder] = useState<string>(
     () => localStorage.getItem(LS.notesFolder) || "~/RobertNotes"
   );
+  // Meeting Memory (Fathom-like, local): transcript logging per meeting,
+  // takeaways + memory merge on Stop, learned memory injected into grounding.
+  const [recordMeetings, setRecordMeetings] = useState<boolean>(
+    () => localStorage.getItem("robert.recordMeetings") !== "0"
+  );
+  const [useMemory, setUseMemory] = useState<boolean>(
+    () => localStorage.getItem("robert.useMemory") !== "0"
+  );
+  const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
+  const [postMeeting, setPostMeeting] = useState<string>(""); // status after Stop
+  const meetingDirRef = useRef<string>("");
   // Optional explicit selection: ground on ONE file from the folder.
   // "" = Auto (robert-brief.md wins, else all notes combined).
   const [notesFile, setNotesFile] = useState<string>(
@@ -251,6 +306,10 @@ export const useRobert = () => {
   notesFolderRef.current = notesFolder;
   const notesFileRef = useRef(notesFile);
   notesFileRef.current = notesFile;
+  const recordMeetingsRef = useRef(recordMeetings);
+  recordMeetingsRef.current = recordMeetings;
+  const useMemoryRef = useRef(useMemory);
+  useMemoryRef.current = useMemory;
   modeRef.current = mode;
   providerRef.current = provider;
   cloudKeysRef.current = cloudKeys;
@@ -305,55 +364,78 @@ export const useRobert = () => {
     [customBaseUrl]
   );
   useEffect(() => localStorage.setItem("robert.notesFile", notesFile), [notesFile]);
+  useEffect(
+    () => localStorage.setItem("robert.recordMeetings", recordMeetings ? "1" : "0"),
+    [recordMeetings]
+  );
+  useEffect(() => localStorage.setItem("robert.useMemory", useMemory ? "1" : "0"), [useMemory]);
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
   useEffect(() => localStorage.setItem("robert.persona", persona), [persona]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
 
-  const suggest = useCallback(async (turnText: string, force = false) => {
-    const type = modeRef.current; // conversation type
-    const prov = providerRef.current; // brain provider
-    const id = ++reqIdRef.current;
-    // keep the current answer on screen until a new one is ready (and on WAIT)
-    setSuggesting(true);
-    setError(null);
-
-    // Route to the local brain (Ollama) or the selected cloud provider.
-    const askBrain = async (user: string): Promise<string> => {
+  // One routed call to the selected brain (local or cloud). Used by live
+  // suggestions, the key test, and the post-meeting summary/merge.
+  const brainCall = useCallback(
+    async (system: string, user: string, maxTokens = 320): Promise<string> => {
+      const prov = providerRef.current;
       if (prov === "local") {
         return await invoke<string>("robert_suggest_local", {
           model: localModelRef.current || "gemma4:12b",
-          system: composeGrounding(),
+          system,
           user,
+          maxTokens,
         });
       }
       const meta = CLOUD_PROVIDERS.find((p) => p.id === prov);
       const key = (cloudKeysRef.current[prov] || "").trim();
-      if (!key)
-        throw new Error(
-          `Add your ${meta?.label ?? prov} API key in settings.`
-        );
+      if (!key) throw new Error(`Add your ${meta?.label ?? prov} API key in settings.`);
       const mdl = (cloudModelsRef.current[prov] || meta?.defaultModel || "").trim();
       if (prov === "anthropic") {
         return await invoke<string>("robert_suggest_anthropic", {
           apiKey: key,
           model: mdl || "claude-opus-5",
-          system: composeGrounding(),
+          system,
           user,
+          maxTokens,
         });
       }
-      const baseUrl =
-        prov === "custom" ? customBaseUrlRef.current.trim() : meta?.baseUrl || "";
+      const baseUrl = prov === "custom" ? customBaseUrlRef.current.trim() : meta?.baseUrl || "";
       if (prov === "custom" && !baseUrl)
         throw new Error("Set the custom provider's base URL in settings.");
       return await invoke<string>("robert_suggest", {
         apiKey: key,
         model: mdl,
-        system: composeGrounding(),
+        system,
         user,
         baseUrl,
+        maxTokens,
       });
-    };
+    },
+    []
+  );
+
+  // Append one event to the current meeting's transcript log (if recording).
+  const logEvent = useCallback((obj: Record<string, unknown>) => {
+    const dir = meetingDirRef.current;
+    if (!dir) return;
+    const t = new Date().toTimeString().slice(0, 8);
+    invoke("robert_meeting_append", {
+      notesFolder: notesFolderRef.current,
+      dir,
+      line: JSON.stringify({ t, ...obj }),
+    }).catch(() => {});
+  }, []);
+
+  const suggest = useCallback(async (turnText: string, force = false) => {
+    const type = modeRef.current; // conversation type
+    const id = ++reqIdRef.current;
+    // keep the current answer on screen until a new one is ready (and on WAIT)
+    setSuggesting(true);
+    setError(null);
+
+    // Every live suggestion = the selected brain with the composed grounding.
+    const askBrain = (user: string) => brainCall(composeGrounding(), user, 320);
     // Research: keyless — DuckDuckGo snippets synthesized by the active brain.
     const research = async (query: string): Promise<string> => {
       try {
@@ -461,6 +543,7 @@ export const useRobert = () => {
             : [{ text: line, turn: asked.slice(-160), at: Date.now() }, ...prev].slice(0, 3)
         );
         setAnswersGiven((n) => n + 1);
+        logEvent({ who: "robert", text: line, route, asked: asked.slice(-200) });
         // Monotonic display: newest finished answer takes the screen now.
         if (id > displayedIdRef.current) {
           displayedIdRef.current = id;
@@ -488,7 +571,7 @@ export const useRobert = () => {
     } finally {
       if (id === reqIdRef.current) setSuggesting(false);
     }
-  }, []);
+  }, [brainCall, logEvent]);
 
   // Manual trigger: force a response to the last completed turn (human-in-the-loop).
   const respondNow = useCallback(() => {
@@ -564,6 +647,7 @@ export const useRobert = () => {
               { who: "me" as const, text: t },
             ].slice(-12);
             setLastRoute("delivered");
+            logEvent({ who: "me", text: t, delivered: true });
             // line delivered: collapse the stacked extras so the window
             // retracts back toward its default size
             setAnswers((prev) => (prev.length > 1 ? prev.slice(0, 1) : prev));
@@ -572,6 +656,7 @@ export const useRobert = () => {
           segmentRef.current = [...segmentRef.current, t];
           setLastTurn(t);
           setTurnsHeard((n) => n + 1);
+          logEvent({ who: "them", text: t });
           // Floor-yield window: answer once they actually stop, not per
           // sentence. Auto adapts to the conversation read; explicit modes
           // have fixed windows (interview answers fast, listening holds).
@@ -607,7 +692,7 @@ export const useRobert = () => {
       unEvent.then((f) => f());
       unTerm.then((f) => f());
     };
-  }, [suggest]);
+  }, [suggest, logEvent]);
 
   // Age out stacked answers so the window retracts to its default size once
   // the rapid-fire moment has passed (the latest answer stays on screen via
@@ -627,47 +712,96 @@ export const useRobert = () => {
   // clear "key accepted / here's the exact error" signal before a meeting.
   const testBrain = useCallback(async () => {
     setBrainTest({ status: "testing", detail: "" });
-    const sys = "Reply with exactly: OK";
-    const user = "Say OK";
     try {
-      const prov = providerRef.current;
-      let out: string;
-      if (prov === "local") {
-        out = await invoke<string>("robert_suggest_local", {
-          model: localModelRef.current || "gemma4:12b",
-          system: sys,
-          user,
-        });
-      } else if (prov === "anthropic") {
-        out = await invoke<string>("robert_suggest_anthropic", {
-          apiKey: (cloudKeysRef.current.anthropic || "").trim(),
-          model: cloudModelsRef.current.anthropic || "claude-opus-5",
-          system: sys,
-          user,
-        });
-      } else {
-        const meta = CLOUD_PROVIDERS.find((p) => p.id === prov);
-        out = await invoke<string>("robert_suggest", {
-          apiKey: (cloudKeysRef.current[prov] || "").trim(),
-          model: cloudModelsRef.current[prov] || meta?.defaultModel || "",
-          system: sys,
-          user,
-          baseUrl:
-            prov === "custom"
-              ? customBaseUrlRef.current.trim()
-              : meta?.baseUrl || "",
-        });
-      }
+      const out = await brainCall("Reply with exactly: OK", "Say OK", 16);
       setBrainTest({ status: "ok", detail: out.slice(0, 60) });
     } catch (e: any) {
       setBrainTest({ status: "fail", detail: String(e).slice(0, 220) });
     }
-  }, []);
+  }, [brainCall]);
 
   // A different brain selection invalidates the last test result.
   useEffect(() => {
     setBrainTest({ status: "idle", detail: "" });
   }, [provider]);
+
+  const refreshMeetings = useCallback(async () => {
+    try {
+      setMeetings(
+        await invoke<MeetingInfo[]>("robert_list_meetings", {
+          notesFolder: notesFolderRef.current,
+        })
+      );
+    } catch {
+      setMeetings([]);
+    }
+  }, []);
+  useEffect(() => {
+    refreshMeetings();
+  }, [refreshMeetings, notesFolder]);
+
+  const deleteMeeting = useCallback(
+    async (dir: string) => {
+      try {
+        await invoke("robert_delete_meeting", { notesFolder: notesFolderRef.current, dir });
+      } catch (e: any) {
+        setError(String(e));
+      }
+      refreshMeetings();
+    },
+    [refreshMeetings]
+  );
+  const openPath = useCallback((path: string) => {
+    invoke("robert_open_path", { path }).catch(() => {});
+  }, []);
+
+  // After Stop: render the transcript, write the takeaways, merge them into
+  // memory. Runs in the background; the UI shows postMeeting status.
+  const finishMeeting = useCallback(
+    async (dir: string) => {
+      const notesFolder = notesFolderRef.current;
+      const strip = (t: string) =>
+        t.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "").trim();
+      try {
+        setPostMeeting("saving transcript…");
+        const [transcript, turns] = await invoke<[string, number]>("robert_meeting_finish", {
+          notesFolder,
+          dir,
+        });
+        if (turns < 2) {
+          setPostMeeting("");
+          refreshMeetings();
+          return;
+        }
+        setPostMeeting("writing takeaways…");
+        const summary = strip(await brainCall(SUMMARY_SYSTEM, transcript.slice(-60000), 1400));
+        await invoke("robert_meeting_write", { notesFolder, dir, name: "summary.md", content: summary });
+        setPostMeeting("updating memory…");
+        const meetingId = dir.split(/[\\/]/).pop() || dir;
+        const mem = await invoke<Record<string, string>>("robert_read_memory", { notesFolder });
+        for (const [name, rules] of Object.entries(MEMORY_RULES)) {
+          const cur = (mem[name] || "").trim();
+          const updated = strip(
+            await brainCall(
+              MERGE_SYSTEM + "\n\n" + rules,
+              `MEETING ID: ${meetingId}\n\nCURRENT FILE (${name}):\n${cur || "(empty)"}\n\nNEW MEETING SUMMARY:\n${summary}`,
+              1600
+            )
+          );
+          if (updated && updated !== "NOOP" && updated.length > 10) {
+            await invoke("robert_write_memory", { notesFolder, name, content: updated });
+          }
+        }
+      } catch (e: any) {
+        setError("Meeting memory: " + String(e).slice(0, 200));
+      } finally {
+        setPostMeeting("");
+        refreshMeetings();
+        reloadGrounding();
+      }
+    },
+    [brainCall, refreshMeetings]
+  );
 
   const refreshProcesses = useCallback(async () => {
     try {
@@ -705,6 +839,25 @@ export const useRobert = () => {
           silenceMs: 900,
         });
         setRunning(true);
+        // Meeting Memory: open the transcript log for this session.
+        meetingDirRef.current = "";
+        if (recordMeetingsRef.current) {
+          const now = new Date();
+          const pad = (n: number) => String(n).padStart(2, "0");
+          const started = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+          try {
+            meetingDirRef.current = await invoke<string>("robert_meeting_begin", {
+              notesFolder: notesFolderRef.current,
+              target: opts?.bundle ?? target,
+              mode: modeRef.current,
+              brain: providerRef.current,
+              started,
+              iso: now.toISOString(),
+            });
+          } catch {
+            meetingDirRef.current = "";
+          }
+        }
         // Prime the brain so turn one is as fast as turn ten. Fire and forget.
         // Local: loads the model + evaluates the grounding KV prefix in Ollama.
         // DeepSeek: warms its remote context cache (other clouds have none).
@@ -739,7 +892,10 @@ export const useRobert = () => {
     }
     setRunning(false);
     setStatus("idle");
-  }, []);
+    const dir = meetingDirRef.current;
+    meetingDirRef.current = "";
+    if (dir) finishMeeting(dir);
+  }, [finishMeeting]);
 
   // Track previous target so we can detect changes and auto-restart the engine.
   // Debounced so typing "brave" one letter at a time does not restart 5 times.
@@ -770,7 +926,11 @@ export const useRobert = () => {
         .catch(() => setNotesList([]));
       const g = await invoke<{ source: string; content: string }>(
         "robert_load_grounding",
-        { notesFolder: notesFolderRef.current, notesFile: notesFileRef.current }
+        {
+          notesFolder: notesFolderRef.current,
+          notesFile: notesFileRef.current,
+          useMemory: useMemoryRef.current,
+        }
       );
       setNotes(g.content);
       // update the ref immediately so a prewarm right after load (before the
@@ -796,7 +956,7 @@ export const useRobert = () => {
   }, [notesFolder, reloadGrounding]);
   useEffect(() => {
     reloadGrounding();
-  }, [notesFile, reloadGrounding]);
+  }, [notesFile, useMemory, reloadGrounding]);
 
   // Auto-start once on open if enabled.
   // The local brain needs no API key; cloud providers do.
@@ -851,6 +1011,15 @@ export const useRobert = () => {
     setNotesFile,
     notesList,
     reloadGrounding,
+    recordMeetings,
+    setRecordMeetings,
+    useMemory,
+    setUseMemory,
+    meetings,
+    refreshMeetings,
+    deleteMeeting,
+    openPath,
+    postMeeting,
     partial,
     lastTurn,
     turnsHeard,

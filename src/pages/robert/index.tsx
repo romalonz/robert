@@ -169,6 +169,14 @@ export default function Robert() {
         >
           {statusLabel[r.status] ?? r.status}
         </span>
+        {r.running && r.recordMeetings && (
+          <span className="text-[10px] text-red-400 select-none" title="Transcript is being logged to your notes folder">
+            ● REC
+          </span>
+        )}
+        {r.postMeeting && (
+          <span className="text-[10px] text-amber-300 select-none">{r.postMeeting}</span>
+        )}
         {/* the big empty area drags the window across both screens */}
         <div data-tauri-drag-region className="flex-1 self-stretch" />
         <div className="flex items-center gap-0.5 bg-neutral-900/50 rounded p-0.5">
@@ -488,6 +496,72 @@ export default function Robert() {
           robert-brief.md inside it becomes the meeting brief and wins over
           everything else.
         </span>
+        <div className="flex flex-col gap-1.5 border-t border-neutral-800/50 pt-2">
+          <div className="flex items-center gap-4 flex-wrap text-[11px] text-neutral-400">
+            <span className="text-[10px] uppercase tracking-wide text-neutral-600">
+              Meeting memory
+            </span>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={r.recordMeetings}
+                onChange={(e) => r.setRecordMeetings(e.target.checked)}
+              />
+              record meetings (transcript + takeaways, local only)
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={r.useMemory}
+                onChange={(e) => r.setUseMemory(e.target.checked)}
+              />
+              use what I learned in answers
+            </label>
+          </div>
+          {r.meetings.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {r.meetings.slice(0, 5).map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-2 text-[11px] text-neutral-400"
+                >
+                  <span className="truncate flex-1" title={m.dir}>
+                    {m.id} · {m.turns} turns{m.has_summary ? " · takeaways ready" : ""}
+                  </span>
+                  {m.has_summary && (
+                    <button
+                      onClick={() => r.setNotesFile(`meetings/${m.id}/summary.md`)}
+                      className="shrink-0 text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
+                      title="Ground Robert on this meeting's takeaways"
+                    >
+                      use
+                    </button>
+                  )}
+                  <button
+                    onClick={() => r.openPath(m.dir)}
+                    className="shrink-0 text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
+                  >
+                    open
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete meeting ${m.id} and its transcript?`))
+                        r.deleteMeeting(m.dir);
+                    }}
+                    className="shrink-0 text-red-400/70 hover:text-red-300 underline underline-offset-2"
+                  >
+                    delete
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <span className="text-[10px] text-neutral-600">
+            Each meeting is saved under your notes folder in meetings/, with a
+            transcript and takeaways written on Stop. What Robert learns goes
+            into memory/ as plain files you can read and edit.
+          </span>
+        </div>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] text-neutral-400">
             Persona &amp; rules (generic — yours to customize; no meeting facts

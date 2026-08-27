@@ -133,6 +133,15 @@ pub fn run() {
             robert::robert_prewarm_local,
             robert::robert_load_grounding,
             robert::robert_list_notes,
+            robert::robert_meeting_begin,
+            robert::robert_meeting_append,
+            robert::robert_meeting_finish,
+            robert::robert_meeting_write,
+            robert::robert_read_memory,
+            robert::robert_write_memory,
+            robert::robert_list_meetings,
+            robert::robert_delete_meeting,
+            robert::robert_open_path,
             robert::robert_set_height,
         ])
         .setup(|app| {
