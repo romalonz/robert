@@ -206,7 +206,7 @@ pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
 
     // turn loop — same constants and semantics as the macOS engine
     let check_ms: u64 = 120;
-    let silence_ms_limit: u64 = 1200;
+    let silence_ms_limit: u64 = 900;
     let mut samples16: Vec<f32> = Vec::new();
     let mut energies: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
     let mut had_speech = false;

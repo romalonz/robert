@@ -75,15 +75,15 @@ export function readConversation(
   if (CHALLENGE_MARKERS.test(lastTheirs)) {
     return {
       kind: "challenge",
-      holdMs: 700,
+      holdMs: 250,
       hint:
-        "They are pushing back or skeptical. Acknowledge their point first, then answer with the specific fact or number from my notes that addresses it, or a polite probing question. Calm, never defensive.",
+        "They are pushing back or skeptical. Take their point seriously in plain words (no canned opener), then answer with the specific fact or number from my notes that addresses it, or a polite probing question. Calm, never defensive.",
     };
   }
   if (isQuestion(lastTheirs) && ADDRESSED_TO_ME.test(lastTheirs)) {
     return {
       kind: "qna",
-      holdMs: 650,
+      holdMs: 200,
       hint:
         "They asked ME a direct question. Answer it directly and confidently now, and back it with the specific number, name, or fact from my notes. No hedging.",
     };
@@ -91,7 +91,7 @@ export function readConversation(
   if (SMALLTALK_MARKERS.test(lastTheirs) && segWords < 30) {
     return {
       kind: "smalltalk",
-      holdMs: 850,
+      holdMs: 400,
       hint:
         "Small talk / greeting ritual. One brief, warm, human line matching their energy, or WAIT. No business facts.",
     };
@@ -100,7 +100,7 @@ export function readConversation(
   if (segWords > 60 || avgTheirWords > 45 || BRIEFING_MARKERS.test(recentText)) {
     return {
       kind: "briefing",
-      holdMs: 1600,
+      holdMs: 1000,
       hint:
         "They are presenting or explaining at length and just paused. Give me ONE short line for the pause: a brief acknowledgment plus one value-add, insight, or sharp question about what they said. Never a lecture. Only reply WAIT if they are obviously mid-sentence.",
     };
@@ -108,7 +108,7 @@ export function readConversation(
   if (DECISION_MARKERS.test(recentText)) {
     return {
       kind: "decision",
-      holdMs: 900,
+      holdMs: 500,
       hint:
         "A decision is on the table. If asked, ONE clear recommendation with a one-line why. No fence-sitting.",
     };
@@ -116,14 +116,14 @@ export function readConversation(
   if (STATUS_MARKERS.test(recentText)) {
     return {
       kind: "status",
-      holdMs: 900,
+      holdMs: 500,
       hint:
         "Status-update cadence. Speak only when my area is named or a question lands; keep status lines crisp and factual.",
     };
   }
   return {
     kind: "discussion",
-    holdMs: 950,
+    holdMs: 500,
     hint: "Normal back-and-forth. Respond when it is naturally my turn.",
   };
 }
@@ -214,4 +214,96 @@ export function matchesMyLine(turn: string, myLines: string[]): boolean {
     if (hits / short >= 0.72) return true;
   }
   return false;
+}
+
+// ─── Human voice filter ──────────────────────────────────────────────────────
+// Robert's lines are SPOKEN. The tells that make them "sound like AI" are
+// mostly openers and vocabulary, and they are deterministic enough to strip
+// without a model. Sources: blader/humanizer (Wikipedia's "Signs of AI
+// writing", 35 patterns) and jalaalrd/anti-ai-slop-writing (banned words,
+// phrases, openers). Tailored here to conversational speech.
+
+// Therapist / agreeable / announcement openers. Nobody says these on a call.
+const TELL_OPENERS = [
+  /^(great|good|excellent|fair|interesting|that'?s a (great|good|fair|valid|excellent)) (question|point)[.!,:]?\s*/i,
+  /^(absolutely|certainly|sure|of course|exactly|indeed|definitely|understood|noted|right|correct)[.!,:]\s*/i,
+  /^(i (completely |totally |fully )?(understand|hear|appreciate|see|get|acknowledge)) (your|the|that|where you'?re)[^.!?]*[.!?,]\s*/i,
+  /^(i see why (that'?s|this is|you'?d be) [^.!?]*[.!?,])\s*/i,
+  /^(that'?s (a )?(fair|valid|reasonable|good)( point| concern| take)?)[.!,]\s*/i,
+  /^(you'?re (absolutely |totally |completely )?right)[.!,]\s*/i,
+  /^(thanks?( you)? for (asking|raising|flagging|the question)[^.!?]*[.!?,])\s*/i,
+  /^(to be (honest|fair|clear)|honestly|frankly|look|well|so)[,:]\s*/i,
+  /^(it'?s (worth noting|important to note|worth mentioning) that)\s*/i,
+  /^(the (short|simple|honest) answer is)[:,]?\s*/i,
+];
+
+// Word-level slop -> plain speech.
+const SLOP_SWAPS: [RegExp, string][] = [
+  [/\butili[sz]e(d|s)?\b/gi, "use$1"],
+  [/\bleverag(e|es|ed|ing)\b/gi, "use"],
+  [/\bcommence(d|s)?\b/gi, "start$1"],
+  [/\bfacilitat(e|es|ed|ing)\b/gi, "help"],
+  [/\bin order to\b/gi, "to"],
+  [/\bat this point in time\b/gi, "right now"],
+  [/\bdue to the fact that\b/gi, "because"],
+  [/\bseamless(ly)?\b/gi, "smooth$1"],
+  [/\brobust\b/gi, "solid"],
+  [/\bstreamlin(e|es|ed|ing)\b/gi, "simplif$1"],
+  [/\bensur(e|es|ing) that\b/gi, "mak$1 sure"],
+  [/\bmoving forward,?\s*/gi, ""],
+  [/\bgoing forward,?\s*/gi, ""],
+  [/\bat the end of the day,?\s*/gi, ""],
+  [/\bit'?s worth noting that\s*/gi, ""],
+  [/\bit'?s important to note that\s*/gi, ""],
+  [/\bin essence,?\s*/gi, ""],
+  [/\bfundamentally,?\s*/gi, ""],
+  [/\bat its core,?\s*/gi, ""],
+  [/\brest assured,?\s*/gi, ""],
+  [/\bvalue[- ]add(ed)?\b/gi, "useful"],
+  [/\bsynerg(y|ies)\b/gi, "fit"],
+  [/\bpain points?\b/gi, "problems"],
+];
+
+// Heavy tells that need a real rewrite, not a word swap.
+const HEAVY_TELLS =
+  /\b(not (just|only|merely) [^.]{2,60}?,? (but|it'?s) (also |about )?)|\b(delve|tapestry|testament to|landscape|pivotal|multifaceted|underscore[sd]?|garner|bolster|paramount|game[- ]chang|groundbreaking|cutting[- ]edge|transformative|unprecedented|holistic|synergi|empower|elevate|unlock the)/i;
+
+export interface Humanized {
+  text: string;
+  changed: boolean;
+  needsRewrite: boolean;
+}
+
+/// Strip the AI tells from a spoken line. Deterministic; safe to run on every
+/// suggestion. `needsRewrite` asks the caller for ONE model rewrite when the
+/// heavy patterns survive (they can't be fixed by substitution).
+export function humanizeLine(raw: string): Humanized {
+  let t = raw.trim();
+  const before = t;
+  // dashes -> spoken punctuation
+  t = t.replace(/\s*[—–]\s*/g, ", ");
+  // straight quotes
+  t = t.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  // peel stacked openers (at most three passes)
+  for (let i = 0; i < 3; i++) {
+    let hit = false;
+    for (const re of TELL_OPENERS) {
+      if (re.test(t)) {
+        t = t.replace(re, "");
+        hit = true;
+      }
+    }
+    if (!hit) break;
+  }
+  for (const [re, rep] of SLOP_SWAPS) t = t.replace(re, rep);
+  // tidy: leading punctuation/space, capitalize, collapse spaces
+  t = t.replace(/^[\s,.:;]+/, "").replace(/\s{2,}/g, " ").replace(/\s+([,.!?])/g, "$1").trim();
+  if (t) t = t[0].toUpperCase() + t.slice(1);
+  // if peeling emptied the line, keep the original rather than nothing
+  if (t.length < 3) t = before;
+  return {
+    text: t,
+    changed: t !== before,
+    needsRewrite: HEAVY_TELLS.test(t),
+  };
 }
