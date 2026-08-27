@@ -914,35 +914,60 @@ fn chunk_note(text: &str) -> Vec<String> {
     chunks
 }
 
+/// Rarity weight per query token: log((N+1)/(df+1)) + 1 over all chunks, so a
+/// word that appears in one paragraph ("cost") outweighs one that appears in
+/// most of them ("reporting").
+fn idf_weights(query: &[String], chunk_token_sets: &[std::collections::HashSet<String>]) -> std::collections::HashMap<String, f32> {
+    let n = chunk_token_sets.len().max(1) as f32;
+    let mut w = std::collections::HashMap::new();
+    for q in query {
+        if w.contains_key(q) {
+            continue;
+        }
+        let df = chunk_token_sets.iter().filter(|s| s.contains(q)).count() as f32;
+        w.insert(q.clone(), ((n + 1.0) / (df + 1.0)).ln() + 1.0);
+    }
+    w
+}
+
 fn score_chunk(query: &[String], chunk: &str) -> f32 {
-    if query.is_empty() {
+    // unweighted fallback (unit tests / single-chunk use); the real path uses
+    // score_chunk_weighted with corpus IDF
+    let set: std::collections::HashSet<String> = tokens(chunk).into_iter().collect();
+    let w: std::collections::HashMap<String, f32> = query.iter().map(|q| (q.clone(), 1.0)).collect();
+    score_chunk_weighted(query, &set, &w)
+}
+
+fn score_chunk_weighted(
+    query: &[String],
+    chunk_tokens: &std::collections::HashSet<String>,
+    weights: &std::collections::HashMap<String, f32>,
+) -> f32 {
+    if query.is_empty() || chunk_tokens.is_empty() {
         return 0.0;
     }
-    let ct = tokens(chunk);
-    if ct.is_empty() {
-        return 0.0;
-    }
-    let set: std::collections::HashSet<&str> = ct.iter().map(|s| s.as_str()).collect();
-    let mut hits = 0usize;
-    let mut num_hits = 0usize;
     let mut seen = std::collections::HashSet::new();
+    let mut total = 0.0f32;
+    let mut hit = 0.0f32;
+    let mut num_hits = 0usize;
     for q in query {
         if !seen.insert(q.as_str()) {
             continue;
         }
-        if set.contains(q.as_str()) {
-            hits += 1;
+        let w = *weights.get(q).unwrap_or(&1.0);
+        total += w;
+        if chunk_tokens.contains(q) {
+            hit += w;
             if q.chars().any(|c| c.is_ascii_digit()) {
                 num_hits += 1;
             }
         }
     }
-    if hits == 0 {
+    if hit == 0.0 || total == 0.0 {
         return 0.0;
     }
-    let uniq_q = seen.len().max(1) as f32;
-    // coverage of the question, small bonus for numbers, mild length penalty
-    hits as f32 / uniq_q + 0.3 * num_hits as f32 - (ct.len() as f32 / 4000.0)
+    // weighted coverage of the question, small bonus for numbers, mild length penalty
+    hit / total + 0.3 * num_hits as f32 - (chunk_tokens.len() as f32 / 4000.0)
 }
 
 /// Top-k relevant paragraphs across all notes for `query`, formatted for the prompt.
@@ -965,13 +990,21 @@ pub fn robert_retrieve_notes(
             files.push((std::time::SystemTime::UNIX_EPOCH, format!("memory/{}", name), c));
         }
     }
-    let mut scored: Vec<(f32, String, String)> = Vec::new();
+    // chunk everything once, compute corpus rarity weights, then score
+    let mut chunks: Vec<(String, String, std::collections::HashSet<String>)> = Vec::new();
     for (_, rel, content) in &files {
         for ch in chunk_note(content) {
-            let sc = score_chunk(&q, &ch);
-            if sc > 0.34 {
-                scored.push((sc, rel.clone(), ch));
-            }
+            let set: std::collections::HashSet<String> = tokens(&ch).into_iter().collect();
+            chunks.push((rel.clone(), ch, set));
+        }
+    }
+    let sets: Vec<std::collections::HashSet<String>> = chunks.iter().map(|c| c.2.clone()).collect();
+    let weights = idf_weights(&q, &sets);
+    let mut scored: Vec<(f32, String, String)> = Vec::new();
+    for (rel, ch, set) in chunks {
+        let sc = score_chunk_weighted(&q, &set, &weights);
+        if sc > 0.34 {
+            scored.push((sc, rel, ch));
         }
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -1230,4 +1263,21 @@ fn load_grounding_inner(
         "No .md notes found in {} — drop your notes there (or point the setting at an Obsidian vault).",
         folder
     ))
+}
+#[cfg(test)]
+mod retrieval_live_probe {
+    // Prints what retrieval pulls from the REAL notes folder for a few
+    // questions. Run: cargo test retrieval_live_probe -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn probe_real_notes() {
+        for q in [
+            "where do the container ETAs for cargo tracking come from?",
+            "what is the gotcha with the reports folder path in PowerShell?",
+            "how much did the reporting center cost us?",
+        ] {
+            let out = super::robert_retrieve_notes(None, q.to_string(), Some(1200)).unwrap();
+            println!("\n=== Q: {} ===\n{}\n", q, out);
+        }
+    }
 }
