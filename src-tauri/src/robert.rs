@@ -897,14 +897,14 @@ fn tokens(text: &str) -> Vec<String> {
 
 /// Split a note into paragraph-sized chunks (blank-line separated; bullet runs
 /// stay together), each tagged with its nearest heading for context.
-fn chunk_note(text: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
+fn chunk_note(text: &str) -> Vec<(String, String)> {
+    let mut chunks: Vec<(String, String)> = Vec::new();
     let mut heading = String::new();
     let mut cur = String::new();
-    let flush = |cur: &mut String, heading: &str, chunks: &mut Vec<String>| {
+    let flush = |cur: &mut String, heading: &str, chunks: &mut Vec<(String, String)>| {
         let c = cur.trim();
         if c.len() > 30 {
-            chunks.push(if heading.is_empty() { c.to_string() } else { format!("{}\n{}", heading, c) });
+            chunks.push((heading.to_string(), c.to_string()));
         }
         cur.clear();
     };
@@ -1005,21 +1005,30 @@ pub fn robert_retrieve_notes(
             files.push((std::time::SystemTime::UNIX_EPOCH, format!("memory/{}", name), c));
         }
     }
-    // chunk everything once, compute corpus rarity weights, then score
-    let mut chunks: Vec<(String, String, std::collections::HashSet<String>)> = Vec::new();
+    // chunk everything once, compute corpus rarity weights, then score.
+    // A heading that matches the question is the strongest signal we have
+    // (headings summarize), so heading hits earn a boost on top of coverage.
+    struct C { rel: String, text: String, set: std::collections::HashSet<String>, head: std::collections::HashSet<String> }
+    let mut chunks: Vec<C> = Vec::new();
     for (_, rel, content) in &files {
-        for ch in chunk_note(content) {
-            let set: std::collections::HashSet<String> = tokens(&ch).into_iter().collect();
-            chunks.push((rel.clone(), ch, set));
+        for (heading, body) in chunk_note(content) {
+            let text = if heading.is_empty() { body.clone() } else { format!("{}\n{}", heading, body) };
+            let set: std::collections::HashSet<String> = tokens(&text).into_iter().collect();
+            let head: std::collections::HashSet<String> = tokens(&heading).into_iter().collect();
+            chunks.push(C { rel: rel.clone(), text, set, head });
         }
     }
-    let sets: Vec<std::collections::HashSet<String>> = chunks.iter().map(|c| c.2.clone()).collect();
+    let sets: Vec<std::collections::HashSet<String>> = chunks.iter().map(|c| c.set.clone()).collect();
     let weights = idf_weights(&q, &sets);
     let mut scored: Vec<(f32, String, String)> = Vec::new();
-    for (rel, ch, set) in chunks {
-        let sc = score_chunk_weighted(&q, &set, &weights);
+    for c in chunks {
+        let mut sc = score_chunk_weighted(&q, &c.set, &weights);
         if sc > 0.34 {
-            scored.push((sc, rel, ch));
+            let head_hits = q.iter().filter(|t| c.head.contains(t.as_str())).count();
+            if head_hits > 0 {
+                sc += 0.5 * (head_hits as f32 / q.len().max(1) as f32);
+            }
+            scored.push((sc, c.rel, c.text));
         }
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -1058,7 +1067,7 @@ mod retrieval_tests {
     #[test]
     fn picks_the_paragraph_that_answers_the_question() {
         let note = "# Handover\n\nSeven reports are built on the VDI from Epicor BAQ extracts.\n\n## Paths\nEverything publishes to the BWF Insights folder; the [DEV] brackets need -LiteralPath in PowerShell.\n\n## Cargo tracking\nContainer ETAs come from the Vizion API via Playwright, written to Cargo_Tracking_Report.xlsx.\n";
-        let chunks = chunk_note(note);
+        let chunks: Vec<String> = chunk_note(note).into_iter().map(|(h, b)| format!("{}\n{}", h, b)).collect();
         assert_eq!(chunks.len(), 3);
         let q = tokens("where do the container ETAs come from?");
         let mut best = chunks.iter().map(|c| (score_chunk(&q, c), c.clone())).collect::<Vec<_>>();
