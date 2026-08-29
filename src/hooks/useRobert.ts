@@ -17,6 +17,7 @@ import {
   ConvKind,
 } from "@/lib/conversation";
 import { parseAliases } from "@/lib/group";
+import { extractAnswerFormat, capToFormat, normalizeBullets } from "@/lib/format";
 
 // Conversation type, which tunes how eagerly Robert speaks.
 export type RobertMode = "auto" | "interview" | "discussion" | "listening";
@@ -361,9 +362,20 @@ export const useRobert = () => {
 
   // The full system prompt the brain receives: generic persona + whatever
   // the notes folder provided. Stable per meeting, so caching stays intact.
-  const composeGrounding = () =>
-    personaRef.current +
-    (notesRef.current ? NOTES_HEADER + notesRef.current : "");
+  // A knowledge file can dictate HOW Robert answers for that meeting (e.g. an
+  // interview file asking for bullet points under 300 characters) with a
+  // "## Answer format" section. It overrides the persona's prose/length rules.
+  const answerFormat = () => extractAnswerFormat(notesRef.current);
+  const composeGrounding = () => {
+    const fmt = answerFormat();
+    return (
+      personaRef.current +
+      (notesRef.current ? NOTES_HEADER + notesRef.current : "") +
+      (fmt
+        ? `\n\n## ANSWER FORMAT (set by my meeting knowledge file; overrides every rule above about sentence count, length, and bullet points)\n${fmt.text}\n`
+        : "")
+    );
+  };
   const reqIdRef = useRef(0);
   // id of the request whose answer currently owns the main display. Answers
   // display monotonically: a finished answer newer than what is shown takes
@@ -480,7 +492,10 @@ export const useRobert = () => {
     setError(null);
 
     // Every live suggestion = the selected brain with the composed grounding.
-    const askBrain = (user: string) => brainCall(composeGrounding(), user, 320);
+    const fmt = answerFormat();
+    // a character cap means fewer tokens: ~3.5 chars per token plus slack
+    const budget = fmt?.maxChars ? Math.min(320, Math.ceil(fmt.maxChars / 3.5) + 60) : 320;
+    const askBrain = (user: string) => brainCall(composeGrounding(), user, budget);
     // Research: keyless — DuckDuckGo snippets synthesized by the active brain.
     const research = async (query: string): Promise<string> => {
       try {
@@ -577,6 +592,9 @@ export const useRobert = () => {
         groupBlock +
         readHint +
         `${typeRule}\n` +
+        (fmt
+          ? `- ANSWER FORMAT (non-negotiable, overrides the sentence rules below): ${fmt.text.replace(/\s+/g, " ")}\n`
+          : "") +
         `- They have already paused by the time you see this. Reply EXACTLY WAIT only if they are clearly mid-thought, or the text sounds like my own voice echoed back. When in doubt, give me a line.\n` +
         `- If a good answer needs current or external info you are not sure of, reply EXACTLY: NEEDS_RESEARCH: <focused web query>\n` +
         `- Otherwise give me a short, natural, speakable answer (one to three sentences) I can say almost verbatim, using the concrete specifics from my notes when they apply. If a claim seems off, make it a polite probing question. No labels, just the answer.`;
@@ -618,7 +636,7 @@ export const useRobert = () => {
             /* keep the filtered line */
           }
         }
-        line = h.text;
+        line = capToFormat(normalizeBullets(h.text), fmt?.maxChars ?? null);
       }
       if (!wait && line) {
         // Keep the answer even if a newer question superseded this request:

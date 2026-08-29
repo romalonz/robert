@@ -2,6 +2,7 @@
 import { readGroup, extractNames, nameMatches, parseAliases } from "../src/lib/group";
 import { readConversation } from "../src/lib/conversation";
 import type { DialogueTurn, ConvContext } from "../src/lib/conversation";
+import { extractAnswerFormat, capToFormat, normalizeBullets } from "../src/lib/format";
 
 let pass = 0;
 let fail = 0;
@@ -97,6 +98,19 @@ check("rc smalltalk", rc("Good morning everyone, how was the weekend?", ctxG), [
 check("rc no ctx = legacy", readConversation(H, "What do you think?").kind, "qna");
 check("rc auto w/ empty roster behaves 1:1", rc("What do you think?", { aliases: me, roster: [], callType: "auto" }), ["qna", "", 200]);
 check("rc auto 1 name is still 1:1-ish", rc("What do you think?", { aliases: me, roster: ["Julie"], callType: "auto" }), ["qna", "", 200]);
+
+// answer-format override
+const notes = "# Interview\n\n## Role\nstuff\n\n## Answer format\n- At most 300 characters.\n- Bullet points only, 2 to 3 bullets.\n\n## Questions\nmore";
+const fmt = extractAnswerFormat(notes);
+check("fmt text", fmt?.text, "- At most 300 characters.\n- Bullet points only, 2 to 3 bullets.");
+check("fmt cap", fmt?.maxChars, 300);
+check("fmt none", extractAnswerFormat("# Notes\n## Role\nx"), null);
+check("fmt last section", extractAnswerFormat("# N\n## Answer format\nOne sentence, 120 chars max.")?.maxChars, 120);
+check("cap short passthrough", capToFormat("- a\n- b", 300), "- a\n- b");
+const long = "- " + "x".repeat(150) + "\n- " + "y".repeat(150) + "\n- " + "z".repeat(150);
+check("cap at bullet", capToFormat(long, 300), "- " + "x".repeat(150));
+check("bullets normalized", normalizeBullets("* one\n• two\n- three"), "- one\n- two\n- three");
+check("cap at sentence", capToFormat("First sentence here. " + "w".repeat(200) + ". More " + "q".repeat(200), 300).endsWith("."), true);
 
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);
