@@ -39,6 +39,7 @@ jobs:
   # server answers on 11434 afterwards. Independent of the installer build.
   ollama-silent-install-probe:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - name: Download OllamaSetup.exe
         shell: pwsh
@@ -49,9 +50,22 @@ jobs:
       - name: Silent install (/VERYSILENT /SUPPRESSMSGBOXES /NORESTART)
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "$env:TEMP\OllamaSetup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
-          "installer exit code: $($p.ExitCode)"
-          if ($p.ExitCode -ne 0) { exit 1 }
+          # Do NOT use -Wait: it waits for descendants too, and the installer
+          # launches the Ollama tray app, which never exits. Wait for the
+          # installer process itself (bounded), and treat "ollama.exe present"
+          # as the real success signal, exactly like local_brain.rs does.
+          $p = Start-Process -FilePath "$env:TEMP\OllamaSetup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
+          $bin = Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"
+          $deadline = (Get-Date).AddMinutes(10)
+          while ((Get-Date) -lt $deadline) {
+            if ($p.HasExited) { "installer exited with code $($p.ExitCode) after $([int]((Get-Date) - $p.StartTime).TotalSeconds)s"; break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $p.HasExited) {
+            "installer still running after 10 min; ollama.exe present: $(Test-Path $bin)"
+            Get-Process | Where-Object { $_.Name -like '*llama*' -or $_.Name -like '*Setup*' } | Select-Object Name, Id, StartTime | Format-Table | Out-String
+            if (-not (Test-Path $bin)) { exit 1 }
+          } elseif ($p.ExitCode -ne 0) { exit 1 }
 
       - name: Verify install location used by local_brain.rs
         shell: pwsh

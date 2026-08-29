@@ -279,19 +279,15 @@ async fn install_ollama(app: &AppHandle) -> Result<(), String> {
         emit(app, "install", "Installing Ollama (silent)", 0, 0);
         // Inno Setup installer: silent first; if that is refused, run the
         // normal wizard so the user can click through instead of failing.
-        let status = tokio::process::Command::new(&exe)
-            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
-            .status()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !status.success() || ollama_binary().is_none() {
+        // The installer launches the Ollama tray app when it finishes, so
+        // never block on the installer alone: the binary appearing is the
+        // success signal, with a hard timeout.
+        let ok = run_installer_until_binary(&exe, &["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], 600).await?;
+        if !ok {
             emit(app, "install", "Installing Ollama: follow the installer window", 0, 0);
-            let status = tokio::process::Command::new(&exe)
-                .status()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !status.success() || ollama_binary().is_none() {
-                return Err(format!("Ollama installer did not complete ({status})"));
+            let ok = run_installer_until_binary(&exe, &[], 1800).await?;
+            if !ok {
+                return Err("Ollama installer did not complete".into());
             }
         }
         return Ok(());
@@ -322,6 +318,37 @@ async fn install_ollama(app: &AppHandle) -> Result<(), String> {
     {
         let _ = app;
         return Err("On Linux run: curl -fsSL https://ollama.com/install.sh | sh".into());
+    }
+}
+
+/// Run the installer and wait until either it exits successfully or the
+/// Ollama binary appears (the installer may keep running because it launched
+/// the tray app). `timeout_secs` bounds the wait. Ok(false) = did not install.
+#[cfg(target_os = "windows")]
+async fn run_installer_until_binary(exe: &PathBuf, args: &[&str], timeout_secs: u64) -> Result<bool, String> {
+    let mut child = tokio::process::Command::new(exe)
+        .args(args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let start = std::time::Instant::now();
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            // installer finished on its own
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            return Ok(status.success() && ollama_binary().is_some());
+        }
+        if ollama_binary().is_some() {
+            // files are in place; give the installer a moment to finish writing
+            tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+            cancelled()?;
+            return Ok(true);
+        }
+        if start.elapsed().as_secs() > timeout_secs {
+            let _ = child.kill().await;
+            return Ok(ollama_binary().is_some());
+        }
+        cancelled()?;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 }
 
