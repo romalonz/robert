@@ -2,7 +2,7 @@
 import { readGroup, extractNames, nameMatches, parseAliases } from "../src/lib/group";
 import { readConversation } from "../src/lib/conversation";
 import type { DialogueTurn, ConvContext } from "../src/lib/conversation";
-import { extractAnswerFormat, capToFormat, normalizeBullets } from "../src/lib/format";
+import { extractAnswerFormat, capToFormat, normalizeBullets, capFor, isNarrativeQuestion } from "../src/lib/format";
 
 let pass = 0;
 let fail = 0;
@@ -111,6 +111,20 @@ const long = "- " + "x".repeat(150) + "\n- " + "y".repeat(150) + "\n- " + "z".re
 check("cap at bullet", capToFormat(long, 300), "- " + "x".repeat(150));
 check("bullets normalized", normalizeBullets("* one\n• two\n- three"), "- one\n- two\n- three");
 check("cap at sentence", capToFormat("First sentence here. " + "w".repeat(200) + ". More " + "q".repeat(200), 300).endsWith("."), true);
+
+const notes2 = "## Answer format\n- Start with one explainer sentence, then bullets.\n- Default: at most 400 characters, 2 to 3 bullets.\n- Narrative questions (walk me through, employment history): up to 900 characters, 4 to 6 bullets.\n";
+const f2 = extractAnswerFormat(notes2)!;
+check("fmt dual caps", [f2.maxChars, f2.extendedChars], [400, 900]);
+check("narrative: history", isNarrativeQuestion("Walk me through your employment history."), true);
+check("narrative: yourself", isNarrativeQuestion("So, tell us a bit about yourself."), true);
+check("narrative: example", isNarrativeQuestion("Give me an example of a time an integration failed."), true);
+check("narrative: end to end", isNarrativeQuestion("Take us through one integration end to end."), true);
+check("not narrative: how", isNarrativeQuestion("How would you stop an invoice posting twice?"), false);
+check("not narrative: what", isNarrativeQuestion("What's your experience with SAP ByDesign?"), false);
+check("cap default", capFor(f2, "How do you decide the system of record?"), 400);
+check("cap narrative", capFor(f2, "Walk me through your career path."), 900);
+check("cap narrative fallback 3x", capFor(extractAnswerFormat("## Answer format\n300 characters max")!, "Tell me about yourself"), 900);
+check("cap no fmt", capFor(null, "Tell me about yourself"), null);
 
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);

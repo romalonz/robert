@@ -17,7 +17,7 @@ import {
   ConvKind,
 } from "@/lib/conversation";
 import { parseAliases } from "@/lib/group";
-import { extractAnswerFormat, capToFormat, normalizeBullets } from "@/lib/format";
+import { extractAnswerFormat, capToFormat, normalizeBullets, capFor, isNarrativeQuestion } from "@/lib/format";
 
 // Conversation type, which tunes how eagerly Robert speaks.
 export type RobertMode = "auto" | "interview" | "discussion" | "listening";
@@ -493,8 +493,13 @@ export const useRobert = () => {
 
     // Every live suggestion = the selected brain with the composed grounding.
     const fmt = answerFormat();
+    // The cap for THIS question: narrative questions ("walk me through your
+    // employment history") get the format's larger cap; the rest the default.
+    const askedText = (segmentRef.current.join(" ") + " " + partialRef.current + " " + turnText).trim();
+    const cap = capFor(fmt, askedText);
+    const narrative = !!fmt && isNarrativeQuestion(askedText);
     // a character cap means fewer tokens: ~3.5 chars per token plus slack
-    const budget = fmt?.maxChars ? Math.min(320, Math.ceil(fmt.maxChars / 3.5) + 60) : 320;
+    const budget = cap ? Math.min(480, Math.ceil(cap / 3.5) + 60) : 320;
     const askBrain = (user: string) => brainCall(composeGrounding(), user, budget);
     // Research: keyless — DuckDuckGo snippets synthesized by the active brain.
     const research = async (query: string): Promise<string> => {
@@ -593,7 +598,10 @@ export const useRobert = () => {
         readHint +
         `${typeRule}\n` +
         (fmt
-          ? `- ANSWER FORMAT (non-negotiable, overrides the sentence rules below): ${fmt.text.replace(/\s+/g, " ")}\n`
+          ? `- ANSWER FORMAT (non-negotiable, overrides the sentence rules below): ${fmt.text.replace(/\s+/g, " ")}\n` +
+            (narrative && cap
+              ? `- This is a NARRATIVE question (a history, a walkthrough, an example): use the narrative allowance, up to ${cap} characters, 4 to 6 bullets in time order, each carrying one concrete number or name. Still open with the one-sentence explainer.\n`
+              : "")
           : "") +
         `- They have already paused by the time you see this. Reply EXACTLY WAIT only if they are clearly mid-thought, or the text sounds like my own voice echoed back. When in doubt, give me a line.\n` +
         `- If a good answer needs current or external info you are not sure of, reply EXACTLY: NEEDS_RESEARCH: <focused web query>\n` +
@@ -636,7 +644,7 @@ export const useRobert = () => {
             /* keep the filtered line */
           }
         }
-        line = capToFormat(normalizeBullets(h.text), fmt?.maxChars ?? null);
+        line = capToFormat(normalizeBullets(h.text), cap);
       }
       if (!wait && line) {
         // Keep the answer even if a newer question superseded this request:
