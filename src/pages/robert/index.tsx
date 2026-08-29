@@ -180,7 +180,7 @@ export default function Robert() {
         {/* the big empty area drags the window across both screens */}
         <div data-tauri-drag-region className="flex-1 self-stretch" />
         <div className="flex items-center gap-0.5 bg-neutral-900/50 rounded p-0.5">
-          {(["auto", "interview", "discussion", "listening"] as const).map((m) => (
+          {(["auto", "listening"] as const).map((m) => (
             <button
               key={m}
               onClick={() => r.setMode(m)}
@@ -189,14 +189,13 @@ export default function Robert() {
                   ? "bg-neutral-700 text-white"
                   : "text-neutral-400 hover:text-neutral-200"
               }`}
+              title={
+                m === "auto"
+                  ? "Reads the room: questions, pushback, briefings, group handoffs. Interview files switch it to interview pacing by themselves."
+                  : "Stay quiet while you present; answer only when asked directly."
+              }
             >
-              {m === "auto"
-                ? "Auto"
-                : m === "interview"
-                ? "Interview"
-                : m === "discussion"
-                ? "Discuss"
-                : "Listen"}
+              {m === "auto" ? "Auto" : "Listen"}
             </button>
           ))}
         </div>

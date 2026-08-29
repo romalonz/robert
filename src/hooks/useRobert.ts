@@ -277,9 +277,11 @@ export const useRobert = () => {
   const [target, setTarget] = useState<string>(
     () => localStorage.getItem(LS.target) || "teams"
   );
-  const [mode, setMode] = useState<RobertMode>(
-    () => (localStorage.getItem(LS.mode) as RobertMode) || "auto"
-  );
+  const [mode, setMode] = useState<RobertMode>(() => {
+    const m = localStorage.getItem(LS.mode) as RobertMode | null;
+    // Interview and Discuss buttons are gone: Auto covers both
+    return m === "listening" ? "listening" : "auto";
+  });
   const [lastRoute, setLastRoute] = useState<string>("auto");
   const [autoStart, setAutoStart] = useState<boolean>(
     () => localStorage.getItem(LS.autostart) === "1"
@@ -613,7 +615,11 @@ export const useRobert = () => {
   }, []);
 
   const suggest = useCallback(async (turnText: string, force = false) => {
-    const type = modeRef.current; // conversation type
+    // Auto adopts interview pacing when the selected knowledge is an interview
+    // file (title "Interview knowledge: ..."), so there is no mode to remember.
+    const interviewFile = /^#\s*interview knowledge/im.test(notesRef.current.slice(0, 400));
+    const type: RobertMode | "interview" =
+      modeRef.current === "auto" && interviewFile ? "interview" : modeRef.current; // conversation type
     const id = ++reqIdRef.current;
     // keep the current answer on screen until a new one is ready (and on WAIT)
     setSuggesting(true);
@@ -695,7 +701,7 @@ export const useRobert = () => {
       // conversation read: auto mode adapts; explicit modes keep their rule
       const read = readConversation(historyRef.current, segment, convCtx());
       const readHint =
-        type === "auto" ? `My read of the conversation: ${read.hint}\n` : "";
+        modeRef.current === "auto" ? `My read of the conversation: ${read.hint}\n` : "";
       // Group call: several people share the "Them" lines; say who I am, who
       // is in the room, and who this line is for, so Robert only speaks for me.
       const aliases = parseAliases(myNameRef.current);
