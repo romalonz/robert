@@ -1051,6 +1051,31 @@ pub fn robert_retrieve_notes(
     Ok(out.trim().to_string())
 }
 
+/// Read one top-level file from the notes folder (persona, a note). None when absent.
+#[tauri::command]
+pub fn robert_read_note(notes_folder: Option<String>, name: String) -> Result<Option<String>, String> {
+    let (_, base) = resolve_notes_folder(notes_folder)?;
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .collect();
+    if safe.starts_with('.') || safe.contains("..") {
+        return Err("invalid note name".into());
+    }
+    let p = base.join(&safe);
+    if !p.is_file() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(&p).map(Some).map_err(|e| e.to_string())
+}
+
+/// Absolute path of a top-level notes file (for "Open" buttons).
+#[tauri::command]
+pub fn robert_note_path(notes_folder: Option<String>, name: String) -> Result<String, String> {
+    let (_, base) = resolve_notes_folder(notes_folder)?;
+    Ok(base.join(name.replace("..", "")).to_string_lossy().to_string())
+}
+
 /// Write a top-level note into the notes folder (e.g. meeting takeaways), so
 /// it shows up in the Meeting knowledge picker like any other note.
 #[tauri::command]
@@ -1138,9 +1163,10 @@ fn gather_md(
             gather_md(&p, base, out);
             continue;
         }
+        // files starting with "_" are Robert's own (templates, persona), not knowledge
         if !name.to_lowercase().ends_with(".md")
             || name.eq_ignore_ascii_case("readme.md")
-            || name.starts_with("_TEMPLATE")
+            || name.starts_with('_')
         {
             continue;
         }

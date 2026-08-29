@@ -146,6 +146,8 @@ pub fn run() {
             robert::robert_open_path,
             robert::robert_retrieve_notes,
             robert::robert_write_note,
+            robert::robert_read_note,
+            robert::robert_note_path,
             robert::robert_set_height,
             knowledge::robert_list_inbox,
             knowledge::robert_import_file,

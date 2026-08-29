@@ -59,3 +59,10 @@ sections in 55 s on gemma4:12b (M-series Mac).
 - When a profile is created, `robert_list_unprofiled` finds knowledge files
   carrying "Profile: none" and `convertFile(src, {fromSources, replaces})`
   rebuilds each from `sources/`.
+
+## Persona as a file (same day)
+`_persona.md` in the notes folder replaces the settings textarea. `loadPersona`
+(called by `reloadGrounding`) seeds it with `DEFAULT_GROUNDING`, re-reads it,
+and keeps following app updates while the file still equals the default it was
+written from (`robert.personaBase`). Settings row: Open (default editor via
+`robert_open_path`), Reload, Reset to default. Grounding skips every `_*.md`.

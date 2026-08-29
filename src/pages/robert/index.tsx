@@ -608,17 +608,11 @@ export default function Robert() {
           <span>
             Point this at any folder of Markdown (an Obsidian vault works as-is).
             A robert-brief.md inside it becomes the meeting brief and wins over
-            everything else. Drop any pdf, docx, txt, or html on this window (or
-            use Add file) and Robert rewrites it into a knowledge file.
+            everything else. Drop any pdf, docx, txt, or html on this window, use
+            Add file, or copy it into the folder: Robert always rewrites it into
+            a knowledge file. Start with your résumé; it becomes profile.md.
           </span>
-          <label className="flex items-center gap-1.5 cursor-pointer text-neutral-500 shrink-0">
-            <input
-              type="checkbox"
-              checked={r.autoConvert}
-              onChange={(e) => r.setAutoConvert(e.target.checked)}
-            />
-            auto-convert files dropped in the notes folder
-          </label>
+
         </div>
         <div className="flex flex-col gap-1.5 border-t border-neutral-800/50 pt-2">
           <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-400">
@@ -659,28 +653,48 @@ export default function Robert() {
               />
               record meetings (transcript + takeaways, local only)
             </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={r.useMemory}
-                onChange={(e) => r.setUseMemory(e.target.checked)}
-              />
-              use what I learned in answers
-            </label>
+            <span className="text-neutral-500">
+              what Robert learns in each meeting is always used in answers
+            </span>
           </div>
         </div>
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] text-neutral-400">
-            Persona &amp; rules (generic — yours to customize; no meeting facts
-            belong here)
+        <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-400 border-t border-neutral-800/50 pt-2">
+          <span className="text-[10px] uppercase tracking-wide text-neutral-600">
+            Persona &amp; rules
           </span>
-          <textarea
-            value={r.persona}
-            onChange={(e) => r.setPersona(e.target.value)}
-            rows={5}
-            className="bg-neutral-900/60 border border-neutral-700 rounded px-2 py-1 text-xs outline-none focus:border-neutral-500 font-mono resize-y"
-          />
-        </label>
+          <span className="font-mono text-neutral-300">{r.personaFile}</span>
+          <span className="text-neutral-500 truncate max-w-[260px]" title={r.persona.split("\n")[0]}>
+            {r.personaCustomized ? "customized" : "default"} · {r.persona.length.toLocaleString()} chars ·{" "}
+            {r.persona.split("\n")[0].replace(/^#+\s*/, "").slice(0, 60)}
+          </span>
+          <button
+            onClick={r.openPersona}
+            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
+            title="Open the persona file in your editor. Robert re-reads it on Reload and on Start."
+          >
+            Open
+          </button>
+          <button
+            onClick={r.reloadPersona}
+            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
+            title="Re-read the file after editing"
+          >
+            Reload
+          </button>
+          {r.personaCustomized && (
+            <button
+              onClick={r.resetPersona}
+              className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
+              title="Overwrite the file with Robert's default persona"
+            >
+              Reset to default
+            </button>
+          )}
+          <span className="text-[10px] text-neutral-600 basis-full">
+            Generic behavior rules only; meeting facts belong in knowledge files.
+            Edit the file in any editor and press Reload.
+          </span>
+        </div>
         {/* Meeting knowledge receipt: one line confirming what loaded; the
             full content is inspectable on demand, not permanently displayed. */}
         <div className="flex items-center gap-2 text-[10px] text-neutral-500">

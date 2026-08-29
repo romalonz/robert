@@ -323,15 +323,13 @@ export const useRobert = () => {
   // - persona: generic behavior rules, user-editable, persisted.
   // - notes: meeting-specific knowledge, read-only here — it always comes
   //   from the .md files in the notes folder, never from the app.
-  const [persona, setPersona] = useState<string>(() => {
-    // Follow the app's default persona across updates unless the user edited
-    // it: "personaBase" records the default that was current when it was
-    // saved, so stored === base means "never customized".
-    const stored = localStorage.getItem("robert.persona");
-    const base = localStorage.getItem("robert.personaBase");
-    if (!stored || !base || stored === base) return DEFAULT_GROUNDING;
-    return stored;
-  });
+  // Persona & rules live in a file, like all knowledge: <notes>/_persona.md.
+  // Seeded with the default on first run; edited with any editor; app updates
+  // to the default still apply while the file is untouched ("personaBase"
+  // records the default that was current when the file was written).
+  const [persona, setPersona] = useState<string>(DEFAULT_GROUNDING);
+  const [personaCustomized, setPersonaCustomized] = useState<boolean>(false);
+  const PERSONA_FILE = "_persona.md";
   // Group calls: my name (plus how people mispronounce it) and the call type.
   const [myName, setMyName] = useState<string>(
     () => localStorage.getItem("robert.myName") || ""
@@ -344,9 +342,8 @@ export const useRobert = () => {
   const [inbox, setInbox] = useState<string[]>([]);
   const [convertStatus, setConvertStatus] = useState<string>("");
   const [converting, setConverting] = useState<string>(""); // file being converted
-  const [autoConvert, setAutoConvert] = useState<boolean>(
-    () => localStorage.getItem("robert.autoConvert") !== "0"
-  );
+  // Files dropped into the notes folder are always converted: non-negotiable.
+  const autoConvert = true;
   // Local brain (Ollama + model) status and one-click setup progress
   const [localStatus, setLocalStatus] = useState<{
     installed: boolean;
@@ -372,9 +369,8 @@ export const useRobert = () => {
   const [recordMeetings, setRecordMeetings] = useState<boolean>(
     () => localStorage.getItem("robert.recordMeetings") !== "0"
   );
-  const [useMemory, setUseMemory] = useState<boolean>(
-    () => localStorage.getItem("robert.useMemory") !== "0"
-  );
+  // What Robert learned from past meetings is always used: non-negotiable.
+  const useMemory = true;
   const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
   const [postMeeting, setPostMeeting] = useState<string>(""); // status after Stop
   const meetingDirRef = useRef<string>("");
@@ -504,14 +500,61 @@ export const useRobert = () => {
     () => localStorage.setItem("robert.recordMeetings", recordMeetings ? "1" : "0"),
     [recordMeetings]
   );
-  useEffect(() => localStorage.setItem("robert.useMemory", useMemory ? "1" : "0"), [useMemory]);
+
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
-  useEffect(() => {
-    localStorage.setItem("robert.persona", persona);
-    if (persona === DEFAULT_GROUNDING) localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
-  }, [persona]);
+  /// Load _persona.md (create it from the default when missing; refresh it
+  /// when it still equals an older default).
+  const loadPersona = useCallback(async () => {
+    try {
+      const content = await invoke<string | null>("robert_read_note", {
+        notesFolder: notesFolderRef.current,
+        name: PERSONA_FILE,
+      });
+      const base = localStorage.getItem("robert.personaBase");
+      const untouched = content === null || content.trim() === (base || "").trim();
+      if (untouched) {
+        if (content?.trim() !== DEFAULT_GROUNDING.trim()) {
+          await invoke("robert_write_note", {
+            notesFolder: notesFolderRef.current,
+            name: PERSONA_FILE,
+            content: DEFAULT_GROUNDING + "\n",
+          });
+        }
+        localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
+        setPersona(DEFAULT_GROUNDING);
+        personaRef.current = DEFAULT_GROUNDING;
+        setPersonaCustomized(false);
+      } else {
+        const c = content.trim();
+        setPersona(c);
+        personaRef.current = c;
+        setPersonaCustomized(true);
+      }
+    } catch {
+      setPersona(DEFAULT_GROUNDING);
+      personaRef.current = DEFAULT_GROUNDING;
+    }
+  }, []);
+
+  const resetPersona = useCallback(async () => {
+    await invoke("robert_write_note", {
+      notesFolder: notesFolderRef.current,
+      name: PERSONA_FILE,
+      content: DEFAULT_GROUNDING + "\n",
+    });
+    localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
+    await loadPersona();
+  }, [loadPersona]);
+
+  const openPersona = useCallback(async () => {
+    const p = await invoke<string>("robert_note_path", {
+      notesFolder: notesFolderRef.current,
+      name: PERSONA_FILE,
+    });
+    await invoke("robert_open_path", { path: p });
+  }, []);
   useEffect(() => localStorage.setItem("robert.myName", myName), [myName]);
-  useEffect(() => localStorage.setItem("robert.autoConvert", autoConvert ? "1" : "0"), [autoConvert]);
+
   useEffect(() => localStorage.setItem("robert.callType", callType), [callType]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
@@ -1159,6 +1202,7 @@ export const useRobert = () => {
   // Load grounding from the notes folder: robert-brief.md wins (meeting prep),
   // else all .md files in the folder (Obsidian vault friendly).
   const reloadGrounding = useCallback(async () => {
+    await loadPersona();
     try {
       // refresh the selectable file list alongside the content
       invoke<string[]>("robert_list_notes", {
@@ -1184,7 +1228,7 @@ export const useRobert = () => {
       // keep the default persona grounding if nothing is on disk
       setError(String(e));
     }
-  }, []);
+  }, [loadPersona]);
 
   useEffect(() => {
     reloadGrounding();
@@ -1205,8 +1249,6 @@ export const useRobert = () => {
   }, []);
 
   const convertingRef = useRef(false);
-  const autoConvertRef = useRef(autoConvert);
-  autoConvertRef.current = autoConvert;
 
   /// Rewrite one inbox file into Robert's spec with the active brain, save it
   /// as a note, park the source in sources/, and select it.
@@ -1525,7 +1567,11 @@ export const useRobert = () => {
     },
     cancelLocalSetup,
     persona,
-    setPersona,
+    personaCustomized,
+    personaFile: PERSONA_FILE,
+    openPersona,
+    resetPersona,
+    reloadPersona: loadPersona,
     notes,
     groundingSource,
     notesFolder,
@@ -1538,7 +1584,6 @@ export const useRobert = () => {
     convertStatus,
     converting,
     autoConvert,
-    setAutoConvert,
     convertFile,
     uploadFiles,
     refreshInbox,
@@ -1549,7 +1594,6 @@ export const useRobert = () => {
     recordMeetings,
     setRecordMeetings,
     useMemory,
-    setUseMemory,
     meetings,
     refreshMeetings,
     deleteMeeting,
