@@ -378,7 +378,7 @@ export default function Robert() {
               ))}
             </select>
           </label>
-          {r.provider === "local" ? (
+          {r.provider === "local" && (
             <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
               <span className="text-[10px] text-neutral-400 truncate leading-4">
                 Local model (Ollama)
@@ -390,7 +390,62 @@ export default function Robert() {
                 className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
               />
             </label>
-          ) : (
+          )}
+          {r.provider === "local" && (
+            <div className="flex flex-col gap-1 flex-1 min-w-[220px]">
+              <span className="text-[10px] text-neutral-400 truncate leading-4">
+                Local brain status
+              </span>
+              <div className="h-7 flex items-center gap-2 text-[11px]">
+                {r.localStatus === null ? (
+                  <span className="text-neutral-500">checking…</span>
+                ) : r.localStatus.running && r.localStatus.has_model ? (
+                  <span className="text-emerald-400 truncate">
+                    ready · Ollama running · {r.localModel} installed
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-amber-400 truncate">
+                      {!r.localStatus.installed
+                        ? "Ollama not installed"
+                        : !r.localStatus.running
+                        ? "Ollama not running"
+                        : `${r.localModel} not downloaded`}
+                    </span>
+                    <button
+                      onClick={r.setupLocalBrain}
+                      disabled={!!r.localSetup && !["done", "error"].includes(r.localSetup.stage)}
+                      className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50"
+                      title="Installs Ollama if needed and downloads the model (about 7.5 GB for gemma4:12b)"
+                    >
+                      Set up local brain
+                    </button>
+                  </>
+                )}
+              </div>
+              {r.localSetup && r.localSetup.stage !== "done" && (
+                <div className="flex flex-col gap-0.5">
+                  <div className="h-1.5 w-full bg-neutral-800 rounded overflow-hidden">
+                    <div
+                      className={`h-full ${r.localSetup.stage === "error" ? "bg-red-500" : "bg-emerald-500"}`}
+                      style={{
+                        width: r.localSetup.total
+                          ? `${Math.min(100, Math.round((100 * r.localSetup.completed) / r.localSetup.total))}%`
+                          : "8%",
+                      }}
+                    />
+                  </div>
+                  <span className={`text-[10px] truncate ${r.localSetup.stage === "error" ? "text-red-400" : "text-neutral-500"}`}>
+                    {r.localSetup.status}
+                    {r.localSetup.total
+                      ? ` · ${(r.localSetup.completed / 1e9).toFixed(1)} / ${(r.localSetup.total / 1e9).toFixed(1)} GB`
+                      : ""}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+          {r.provider !== "local" && (
             <>
               <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
                 <span className="text-[10px] text-neutral-400 truncate leading-4">
@@ -489,6 +544,22 @@ export default function Robert() {
           >
             Reload notes
           </button>
+          <label
+            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 flex items-center cursor-pointer"
+            title="Add a job description, agenda, handover, résumé… (pdf, docx, txt, html, csv, md). Robert rewrites it into its knowledge format. You can also drop files onto this window."
+          >
+            Add file
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.docx,.txt,.text,.html,.htm,.csv,.md,.rtf,.json"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) r.uploadFiles(e.target.files);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
           <label className="h-7 flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer ml-auto shrink-0">
             <input
               type="checkbox"
@@ -498,12 +569,48 @@ export default function Robert() {
             auto-start
           </label>
         </div>
-        <span className="text-[10px] text-neutral-600">
-          Point this at any folder of Markdown: an Obsidian vault works as-is.
-          For Notion, export or sync pages as Markdown into the folder. A
-          robert-brief.md inside it becomes the meeting brief and wins over
-          everything else.
-        </span>
+        {(r.inbox.length > 0 || r.convertStatus) && (
+          <div className="flex flex-col gap-1 text-[11px]">
+            {r.inbox.map((f) => (
+              <div key={f} className="flex items-center gap-2 text-neutral-400">
+                <span className="truncate">
+                  {r.converting === f ? "converting" : "waiting"}: {f}
+                </span>
+                {r.converting !== f && (
+                  <button
+                    onClick={() => r.convertFile(f)}
+                    disabled={!!r.converting}
+                    className="h-6 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50"
+                  >
+                    Rewrite to Robert format
+                  </button>
+                )}
+              </div>
+            ))}
+            {r.convertStatus && (
+              <span className={`text-[10px] ${r.convertStatus.startsWith("Could not") ? "text-red-400" : "text-neutral-500"}`}>
+                {r.converting ? "⏳ " : ""}
+                {r.convertStatus}
+              </span>
+            )}
+          </div>
+        )}
+        <div className="flex items-center gap-4 flex-wrap text-[10px] text-neutral-600">
+          <span>
+            Point this at any folder of Markdown (an Obsidian vault works as-is).
+            A robert-brief.md inside it becomes the meeting brief and wins over
+            everything else. Drop any pdf, docx, txt, or html on this window (or
+            use Add file) and Robert rewrites it into a knowledge file.
+          </span>
+          <label className="flex items-center gap-1.5 cursor-pointer text-neutral-500 shrink-0">
+            <input
+              type="checkbox"
+              checked={r.autoConvert}
+              onChange={(e) => r.setAutoConvert(e.target.checked)}
+            />
+            auto-convert files dropped in the notes folder
+          </label>
+        </div>
         <div className="flex flex-col gap-1.5 border-t border-neutral-800/50 pt-2">
           <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-400">
             <span className="text-[10px] uppercase tracking-wide text-neutral-600">

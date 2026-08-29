@@ -3,6 +3,8 @@ mod activate;
 mod api;
 mod capture;
 mod db;
+mod knowledge;
+mod local_brain;
 mod robert;
 #[cfg(target_os = "windows")]
 mod robert_win;
@@ -145,6 +147,14 @@ pub fn run() {
             robert::robert_retrieve_notes,
             robert::robert_write_note,
             robert::robert_set_height,
+            knowledge::robert_list_inbox,
+            knowledge::robert_import_file,
+            knowledge::robert_import_bytes,
+            knowledge::robert_archive_source,
+            knowledge::robert_find_profile,
+            knowledge::robert_extract_text,
+            local_brain::robert_local_status,
+            local_brain::robert_setup_local,
         ])
         .setup(|app| {
             // Setup main window positioning

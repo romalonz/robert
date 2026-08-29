@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   readConversation,
   matchesMyLine,
@@ -206,6 +207,53 @@ Entry format: - <decision or open item> — status: decided | open | done (sourc
 Rules: UPDATE status when an open item is resolved; keep at most 80 lines.`,
 };
 
+// ─── Knowledge inbox: rewrite any document into Robert's file spec ───────────
+const ANSWER_FORMAT_BLOCK = `## Answer format
+- Start with ONE short explainer sentence in plain prose (no bullet), then the bullets.
+- Default: at most 400 characters in total, 2 to 3 short bullets, each one a fact, number, or claim I can say out loud.
+- Narrative questions (walk me through, tell me about yourself, employment history, career path, end to end, give me an example): up to 900 characters, 4 to 6 bullets in time order, each with one number or name.`;
+
+const CONVERT_SYSTEM = `You convert one source document into ONE Markdown knowledge file for Robert, a live meeting copilot that reads the file during a call and quotes it. Output ONLY the Markdown file: no commentary, no code fences, no preamble.
+
+First decide the document type, then use the matching structure.
+
+A) JOB DESCRIPTION or job posting: write an INTERVIEW KNOWLEDGE file with exactly these sections in this order:
+# Interview knowledge: <role>, <company>
+${ANSWER_FORMAT_BLOCK}
+## The role in one line
+## My opening pitch (if asked "tell me about yourself")
+## JD requirements mapped to my experience (bridge = related, not identical)
+(one "### <requirement>" per requirement in the JD, with bullets underneath)
+## What I do today
+## Employment highlights (numbers as on my profile)
+## Projects and freelance work
+## The company (researched; say "as I understand it")
+## A day in this job
+## Likely questions and my bullets
+(one "### <question>" per question, two bullets each; 8 to 10 questions)
+## 30-60-90
+## Questions I can ask them
+## Hard rules for my answers
+
+B) Anything else (agenda, brief, handover, project document, report, notes, transcript, email thread): write a MEETING BRIEF with exactly these sections:
+# Brief: <topic>
+## Who is in the room and the tone to hold
+## What this is about
+## Numbers I can state with confidence
+## Decisions and their reasons
+## Risks, cost, security, and anything already disclosed
+## Likely challenges and my one-line answers
+(one "### <challenge>" per challenge)
+## Open items and next steps
+## Hard rules for my answers
+
+Rules:
+- Use only facts from the SOURCE and, when given, the PROFILE. Never invent numbers, names, dates, or claims. Where the source has nothing for a section, write one bullet starting with "(add:" that says what to fill in.
+- For A: map EVERY requirement to the PROFILE. When the profile lacks it, start the bullet with "Bridge:" and give the closest related experience from the profile. When no profile is given, write "(add: your experience with <requirement>)".
+- For A, "A day in this job" and "Likely questions" may draw on general knowledge of the role; end such bullets with "(general knowledge, verify)".
+- Quote every number exactly as written in the source. Short bullets. Plain English. No em dashes. No tables. First person for anything I would say.
+- Keep the whole file under 12,000 characters.`;
+
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("idle");
@@ -276,6 +324,26 @@ export const useRobert = () => {
     () => (localStorage.getItem("robert.callType") as any) || "auto"
   );
   const [participants, setParticipants] = useState<string[]>([]); // names heard this call
+  // Knowledge inbox (files dropped/uploaded, waiting to be rewritten to spec)
+  const [inbox, setInbox] = useState<string[]>([]);
+  const [convertStatus, setConvertStatus] = useState<string>("");
+  const [converting, setConverting] = useState<string>(""); // file being converted
+  const [autoConvert, setAutoConvert] = useState<boolean>(
+    () => localStorage.getItem("robert.autoConvert") !== "0"
+  );
+  // Local brain (Ollama + model) status and one-click setup progress
+  const [localStatus, setLocalStatus] = useState<{
+    installed: boolean;
+    running: boolean;
+    models: string[];
+    has_model: boolean;
+  } | null>(null);
+  const [localSetup, setLocalSetup] = useState<{
+    stage: string;
+    status: string;
+    completed: number;
+    total: number;
+  } | null>(null);
   const [addressedTo, setAddressedTo] = useState<string>(""); // who the last line was for
   const [notes, setNotes] = useState<string>("");
   const [groundingSource, setGroundingSource] = useState<string>("");
@@ -427,6 +495,7 @@ export const useRobert = () => {
     if (persona === DEFAULT_GROUNDING) localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
   }, [persona]);
   useEffect(() => localStorage.setItem("robert.myName", myName), [myName]);
+  useEffect(() => localStorage.setItem("robert.autoConvert", autoConvert ? "1" : "0"), [autoConvert]);
   useEffect(() => localStorage.setItem("robert.callType", callType), [callType]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
@@ -1105,6 +1174,200 @@ export const useRobert = () => {
     reloadGrounding();
   }, [reloadGrounding]);
 
+  // ── Knowledge inbox ──────────────────────────────────────────────────────
+  const refreshInbox = useCallback(async () => {
+    try {
+      const files = await invoke<string[]>("robert_list_inbox", {
+        notesFolder: notesFolderRef.current,
+      });
+      setInbox(files);
+      return files;
+    } catch {
+      setInbox([]);
+      return [] as string[];
+    }
+  }, []);
+
+  const convertingRef = useRef(false);
+  const autoConvertRef = useRef(autoConvert);
+  autoConvertRef.current = autoConvert;
+
+  /// Rewrite one inbox file into Robert's spec with the active brain, save it
+  /// as a note, park the source in sources/, and select it.
+  const convertFile = useCallback(
+    async (file: string) => {
+      if (convertingRef.current) return;
+      convertingRef.current = true;
+      setConverting(file);
+      try {
+        setConvertStatus(`Reading ${file}…`);
+        const ex = await invoke<{ file: string; kind: string; chars: number; truncated: boolean; text: string }>(
+          "robert_extract_text",
+          { notesFolder: notesFolderRef.current, file }
+        );
+        const profile = await invoke<string | null>("robert_find_profile", {
+          notesFolder: notesFolderRef.current,
+        });
+        const brainName = providerRef.current === "local" ? `local ${localModelRef.current}` : providerRef.current;
+        setConvertStatus(
+          `Rewriting ${file} into Robert's format with the ${brainName} brain${
+            providerRef.current === "local" ? " (a minute or two)" : ""
+          }…`
+        );
+        const user =
+          `SOURCE FILE: ${ex.file} (${ex.kind}${ex.truncated ? ", truncated to the first 60,000 characters" : ""})\n\n` +
+          `SOURCE:\n${ex.text}\n\n` +
+          (profile ? `PROFILE (my experience, use it to map requirements):\n${profile}\n\n` : "PROFILE: none given.\n\n") +
+          `Write the Markdown file now.`;
+        let out = (await brainCall(CONVERT_SYSTEM, user, 3000)).trim();
+        out = out.replace(/^```(?:markdown|md)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+        if (!out.startsWith("#")) out = `# ${file.replace(/\.[^.]+$/, "")}\n\n${out}`;
+        const title = (out.split("\n")[0] || "").replace(/^#+\s*/, "");
+        const slug = title
+          .toLowerCase()
+          .replace(/^(interview knowledge|brief)\s*:\s*/, "")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 60) || file.replace(/\.[^.]+$/, "").toLowerCase();
+        const prefix = /^# brief/i.test(out) ? "robert-brief_" : "robert-knowledge_";
+        const name = await invoke<string>("robert_write_note", {
+          notesFolder: notesFolderRef.current,
+          name: `${prefix}${slug}.md`,
+          content: out + "\n",
+        });
+        await invoke("robert_archive_source", { notesFolder: notesFolderRef.current, file });
+        setNotesFile(name);
+        notesFileRef.current = name;
+        await reloadGrounding();
+        setConvertStatus(`Added ${name} and selected it as the meeting knowledge. Source moved to sources/.`);
+      } catch (e: any) {
+        setConvertStatus(`Could not convert ${file}: ${String(e)}`);
+      } finally {
+        convertingRef.current = false;
+        setConverting("");
+        refreshInbox();
+      }
+    },
+    [brainCall, reloadGrounding, refreshInbox]
+  );
+
+  // auto-convert: whenever the inbox has files and nothing is running
+  useEffect(() => {
+    if (!autoConvert || convertingRef.current || inbox.length === 0) return;
+    convertFile(inbox[0]);
+  }, [inbox, autoConvert, convertFile]);
+
+  useEffect(() => {
+    refreshInbox();
+  }, [refreshInbox, notesFolder]);
+
+  /// Files chosen with the in-app picker (bytes travel to Rust as base64).
+  const uploadFiles = useCallback(
+    async (files: FileList | File[]) => {
+      for (const f of Array.from(files)) {
+        try {
+          const buf = new Uint8Array(await f.arrayBuffer());
+          let bin = "";
+          for (let i = 0; i < buf.length; i += 0x8000) {
+            bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+          }
+          const name = await invoke<string>("robert_import_bytes", {
+            notesFolder: notesFolderRef.current,
+            name: f.name,
+            dataBase64: btoa(bin),
+          });
+          if (name.toLowerCase().endsWith(".md")) {
+            setConvertStatus(`Added ${name}.`);
+            await reloadGrounding();
+          } else {
+            setConvertStatus(`Received ${name}.`);
+          }
+        } catch (e: any) {
+          setConvertStatus(`Could not add ${f.name}: ${String(e)}`);
+        }
+      }
+      refreshInbox();
+    },
+    [reloadGrounding, refreshInbox]
+  );
+
+  // Drag-and-drop onto the window: copy into the notes folder, then the inbox
+  // (and auto-convert) takes over.
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent(async (e) => {
+        if (e.payload.type !== "drop") return;
+        for (const path of e.payload.paths) {
+          try {
+            const name = await invoke<string>("robert_import_file", {
+              notesFolder: notesFolderRef.current,
+              path,
+            });
+            setConvertStatus(name.toLowerCase().endsWith(".md") ? `Added ${name}.` : `Received ${name}.`);
+            if (name.toLowerCase().endsWith(".md")) await reloadGrounding();
+          } catch (err: any) {
+            setConvertStatus(`Could not add ${path}: ${String(err)}`);
+          }
+        }
+        refreshInbox();
+      })
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {});
+    return () => {
+      if (un) un();
+    };
+  }, [reloadGrounding, refreshInbox]);
+
+  // ── Local brain status + one-click setup ─────────────────────────────────
+  const refreshLocalStatus = useCallback(async () => {
+    try {
+      const st = await invoke<{ installed: boolean; running: boolean; models: string[]; has_model: boolean }>(
+        "robert_local_status",
+        { model: localModelRef.current }
+      );
+      setLocalStatus(st);
+      return st;
+    } catch {
+      setLocalStatus(null);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (provider === "local") refreshLocalStatus();
+  }, [provider, localModel, refreshLocalStatus]);
+
+  useEffect(() => {
+    const un = listen<{ stage: string; status: string; completed: number; total: number }>(
+      "robert://local",
+      (e) => {
+        setLocalSetup(e.payload);
+        if (e.payload.stage === "done" || e.payload.stage === "error") {
+          refreshLocalStatus();
+        }
+      }
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, [refreshLocalStatus]);
+
+  const setupLocalBrain = useCallback(async () => {
+    setLocalSetup({ stage: "start", status: "Checking Ollama…", completed: 0, total: 0 });
+    try {
+      const st = await invoke<{ installed: boolean; running: boolean; models: string[]; has_model: boolean }>(
+        "robert_setup_local",
+        { model: localModelRef.current }
+      );
+      setLocalStatus(st);
+    } catch (e: any) {
+      setLocalSetup({ stage: "error", status: String(e), completed: 0, total: 0 });
+    }
+  }, []);
+
   // Re-ground when the notes folder changes (debounced while typing a path)
   // or when a different note file is selected (immediate).
   useEffect(() => {
@@ -1174,6 +1437,18 @@ export const useRobert = () => {
     setNotesFile,
     notesList,
     reloadGrounding,
+    inbox,
+    convertStatus,
+    converting,
+    autoConvert,
+    setAutoConvert,
+    convertFile,
+    uploadFiles,
+    refreshInbox,
+    localStatus,
+    localSetup,
+    refreshLocalStatus,
+    setupLocalBrain,
     recordMeetings,
     setRecordMeetings,
     useMemory,

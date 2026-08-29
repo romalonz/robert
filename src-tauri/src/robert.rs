@@ -1132,13 +1132,16 @@ fn gather_md(
             // meetings/ and memory/ are Meeting Memory's own folders: summaries
             // are offered individually in the picker, memory is injected with
             // its own cap. Neither belongs in the all-notes concatenation.
-            if p.parent() == Some(base) && (name == "meetings" || name == "memory") {
+            if p.parent() == Some(base) && (name == "meetings" || name == "memory" || name == "sources") {
                 continue;
             }
             gather_md(&p, base, out);
             continue;
         }
-        if !name.to_lowercase().ends_with(".md") || name.eq_ignore_ascii_case("readme.md") {
+        if !name.to_lowercase().ends_with(".md")
+            || name.eq_ignore_ascii_case("readme.md")
+            || name.starts_with("_TEMPLATE")
+        {
             continue;
         }
         let meta = match e.metadata() {
@@ -1165,7 +1168,7 @@ fn gather_md(
 
 const NOTES_README: &str = "# RobertNotes\n\nThis folder is Robert's knowledge. Every .md file here becomes meeting grounding.\n\n- Pick a specific file in the app's \"Meeting knowledge source\" dropdown, or leave it on Auto.\n- Auto: a file named robert-brief.md wins when present; otherwise all .md files load, newest first.\n- Keep files small and factual; exact numbers get quoted verbatim in answers.\n- This README is ignored. An Obsidian vault works too: point the app's Notes folder setting at it.\n";
 
-fn resolve_notes_folder(notes_folder: Option<String>) -> Result<(String, std::path::PathBuf), String> {
+pub(crate) fn resolve_notes_folder(notes_folder: Option<String>) -> Result<(String, std::path::PathBuf), String> {
     // HOME on macOS/Linux, USERPROFILE on Windows
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -1181,6 +1184,8 @@ fn resolve_notes_folder(notes_folder: Option<String>) -> Result<(String, std::pa
         let _ = std::fs::create_dir_all(&base);
         let _ = std::fs::write(base.join("README.md"), NOTES_README);
     }
+    // spec templates ride along (idempotent; ignored by grounding)
+    crate::knowledge::ensure_templates(&base);
     Ok((folder, base))
 }
 
