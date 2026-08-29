@@ -158,7 +158,12 @@ pub fn robert_list_inbox(notes_folder: Option<String>) -> Result<Vec<String>, St
             out.push(name);
         }
     }
-    out.sort();
+    // a résumé/CV converts first: it becomes the profile every job
+    // description is mapped against
+    out.sort_by_key(|n| {
+        let l = n.to_lowercase();
+        (if l.contains("resume") || l.contains("résumé") || l.contains("cv") || l.contains("profile") { 0 } else { 1 }, l)
+    });
     Ok(out)
 }
 
@@ -225,6 +230,17 @@ pub fn robert_archive_source(notes_folder: Option<String>, file: String) -> Resu
 #[tauri::command]
 pub fn robert_find_profile(notes_folder: Option<String>) -> Result<Option<String>, String> {
     let (_, base) = resolve_notes_folder(notes_folder)?;
+    // profile.md is the canonical one (written by the inbox from a résumé)
+    let canon = base.join("profile.md");
+    if canon.is_file() {
+        if let Ok(c) = std::fs::read_to_string(&canon) {
+            let mut c = c.trim().to_string();
+            if c.len() > 14_000 {
+                c.truncate(14_000);
+            }
+            return Ok(Some(c));
+        }
+    }
     let entries = std::fs::read_dir(&base).map_err(|e| e.to_string())?;
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_lowercase();
@@ -244,12 +260,44 @@ pub fn robert_find_profile(notes_folder: Option<String>) -> Result<Option<String
     Ok(None)
 }
 
+/// Knowledge files that were converted before a profile existed (they carry
+/// the "Profile: none" marker in their Sources section) with the source file
+/// they came from, so they can be rebuilt once a résumé arrives.
+#[tauri::command]
+pub fn robert_list_unprofiled(notes_folder: Option<String>) -> Result<Vec<(String, String)>, String> {
+    let (_, base) = resolve_notes_folder(notes_folder)?;
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(&base).map_err(|e| e.to_string())?;
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.starts_with("robert-knowledge_") || !name.ends_with(".md") {
+            continue;
+        }
+        let Ok(c) = std::fs::read_to_string(e.path()) else { continue };
+        if !c.contains("- Profile: none") {
+            continue;
+        }
+        let src = c
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("- Source: ").map(|s| s.trim().to_string()))
+            .unwrap_or_default();
+        if !src.is_empty() && base.join("sources").join(&src).is_file() {
+            out.push((name, src));
+        }
+    }
+    Ok(out)
+}
+
 /// Plain text of one inbox file.
 #[tauri::command]
-pub fn robert_extract_text(notes_folder: Option<String>, file: String) -> Result<Extracted, String> {
+pub fn robert_extract_text(
+    notes_folder: Option<String>,
+    file: String,
+    from_sources: Option<bool>,
+) -> Result<Extracted, String> {
     let (_, base) = resolve_notes_folder(notes_folder)?;
     let name = safe_file_name(&file);
-    let path = base.join(&name);
+    let path = if from_sources.unwrap_or(false) { base.join("sources").join(&name) } else { base.join(&name) };
     if !path.is_file() {
         return Err("file not found".into());
     }

@@ -33,3 +33,29 @@ one file at a time. Drag-drop uses `getCurrentWebview().onDragDropEvent`.
 
 Measured: Innova JD (3.4K chars) + profile (11.7K) -> 9K-char file with all
 sections in 55 s on gemma4:12b (M-series Mac).
+
+## Done-for-you hardening (same day)
+- Auto-setup: with Brain = Local and the model not ready, `setupLocalBrain`
+  starts by itself once per launch; Cancel (`robert_local_cancel`) stops the
+  download or pull; Ollama resumes partial pulls on the next attempt.
+- Model choice by RAM (`robert_local_recommend`): >= 15 GB -> gemma4:12b, else
+  gemma4:e4b; applied once unless the user typed a model.
+- Windows: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, falling back to the
+  visible wizard if the silent run fails or leaves no `ollama.exe`; the server
+  is started without a console window. macOS: the unpacked app is opened by
+  path. One automatic pull retry.
+- Proof on real Windows: the `ollama-silent-install-probe` job in
+  `.github/workflows/windows.yml` downloads the installer, installs silently,
+  asserts `%LOCALAPPDATA%\Programs\Ollama\ollama.exe`, starts the server, and
+  pulls a small model through `/api/pull`.
+
+## Résumé as the standing reference
+- A résumé/CV converts to `profile.md` (type C in `CONVERT_SYSTEM`: every role,
+  date, number kept). `robert_find_profile` returns `profile.md` first.
+- The inbox converts résumé-like files before anything else.
+- Job descriptions map every requirement to the profile and end with a
+  `## Sources` section naming both files; without a profile the section says so
+  and the file is marked for rebuild.
+- When a profile is created, `robert_list_unprofiled` finds knowledge files
+  carrying "Profile: none" and `convertFile(src, {fromSources, replaces})`
+  rebuilds each from `sources/`.

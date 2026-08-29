@@ -412,14 +412,23 @@ export default function Robert() {
                         ? "Ollama not running"
                         : `${r.localModel} not downloaded`}
                     </span>
-                    <button
-                      onClick={r.setupLocalBrain}
-                      disabled={!!r.localSetup && !["done", "error"].includes(r.localSetup.stage)}
-                      className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50"
-                      title="Installs Ollama if needed and downloads the model (about 7.5 GB for gemma4:12b)"
-                    >
-                      Set up local brain
-                    </button>
+                    {r.localSetup && !["done", "error"].includes(r.localSetup.stage) ? (
+                      <button
+                        onClick={r.cancelLocalSetup}
+                        className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
+                        title="Stop the download. Robert resumes where it left off next time."
+                      >
+                        Cancel
+                      </button>
+                    ) : (
+                      <button
+                        onClick={r.setupLocalBrain}
+                        className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
+                        title="Installs Ollama if needed and downloads the model (about 7.5 GB for gemma4:12b, 3 GB for gemma4:e4b)"
+                      >
+                        Set up local brain
+                      </button>
+                    )}
                   </>
                 )}
               </div>

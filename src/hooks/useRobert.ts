@@ -234,6 +234,20 @@ ${ANSWER_FORMAT_BLOCK}
 ## 30-60-90
 ## Questions I can ask them
 ## Hard rules for my answers
+## Sources
+(exactly two bullets: "- Source: <source file name>" and "- Profile: profile.md" when a PROFILE was given, or "- Profile: none (upload your résumé and this file will be rebuilt against it)" when not)
+
+C) RÉSUMÉ, CV, or LinkedIn profile export: write a PROFILE file with exactly these sections. This file becomes the standing reference every job description is mapped against, so keep EVERY role, date, number, tool, and client; do not summarize numbers away.
+# Profile: <full name>
+## Summary
+## Experience
+(one "### <title>, <company> (<dates>)" per role, newest first, bullets with the numbers as written)
+## Projects and freelance work
+## Skills and tools
+## Certifications
+## Education
+## Numbers I can quote
+(every metric in the résumé on one line each, exact)
 
 B) Anything else (agenda, brief, handover, project document, report, notes, transcript, email thread): write a MEETING BRIEF with exactly these sections:
 # Brief: <topic>
@@ -246,13 +260,15 @@ B) Anything else (agenda, brief, handover, project document, report, notes, tran
 (one "### <challenge>" per challenge)
 ## Open items and next steps
 ## Hard rules for my answers
+## Sources
+("- Source: <source file name>")
 
 Rules:
 - Use only facts from the SOURCE and, when given, the PROFILE. Never invent numbers, names, dates, or claims. Where the source has nothing for a section, write one bullet starting with "(add:" that says what to fill in.
 - For A: map EVERY requirement to the PROFILE. When the profile lacks it, start the bullet with "Bridge:" and give the closest related experience from the profile. When no profile is given, write "(add: your experience with <requirement>)".
 - For A, "A day in this job" and "Likely questions" may draw on general knowledge of the role; end such bullets with "(general knowledge, verify)".
 - Quote every number exactly as written in the source. Short bullets. Plain English. No em dashes. No tables. First person for anything I would say.
-- Keep the whole file under 12,000 characters.`;
+- Keep the whole file under 12,000 characters (a PROFILE may run to 14,000).`;
 
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
@@ -1195,15 +1211,16 @@ export const useRobert = () => {
   /// Rewrite one inbox file into Robert's spec with the active brain, save it
   /// as a note, park the source in sources/, and select it.
   const convertFile = useCallback(
-    async (file: string) => {
+    async (file: string, opts: { fromSources?: boolean; replaces?: string } = {}) => {
       if (convertingRef.current) return;
       convertingRef.current = true;
       setConverting(file);
+      let madeProfile = false;
       try {
         setConvertStatus(`Reading ${file}…`);
         const ex = await invoke<{ file: string; kind: string; chars: number; truncated: boolean; text: string }>(
           "robert_extract_text",
-          { notesFolder: notesFolderRef.current, file }
+          { notesFolder: notesFolderRef.current, file, fromSources: !!opts.fromSources }
         );
         const profile = await invoke<string | null>("robert_find_profile", {
           notesFolder: notesFolderRef.current,
@@ -1229,17 +1246,43 @@ export const useRobert = () => {
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "")
           .slice(0, 60) || file.replace(/\.[^.]+$/, "").toLowerCase();
-        const prefix = /^# brief/i.test(out) ? "robert-brief_" : "robert-knowledge_";
+        const isProfile = /^# profile/i.test(out);
+        // make sure the Sources section names both files even if the model
+        // dropped it
+        if (!isProfile && !/^## Sources/m.test(out)) {
+          out +=
+            `\n\n## Sources\n- Source: ${file}\n- Profile: ${
+              profile ? "profile.md" : "none (upload your résumé and this file will be rebuilt against it)"
+            }`;
+        }
+        const fileName = isProfile
+          ? "profile.md"
+          : opts.replaces || `${/^# brief/i.test(out) ? "robert-brief_" : "robert-knowledge_"}${slug}.md`;
         const name = await invoke<string>("robert_write_note", {
           notesFolder: notesFolderRef.current,
-          name: `${prefix}${slug}.md`,
+          name: fileName,
           content: out + "\n",
         });
-        await invoke("robert_archive_source", { notesFolder: notesFolderRef.current, file });
-        setNotesFile(name);
-        notesFileRef.current = name;
+        if (!opts.fromSources) {
+          await invoke("robert_archive_source", { notesFolder: notesFolderRef.current, file });
+        }
+        if (isProfile) {
+          madeProfile = true;
+          setConvertStatus(
+            `Saved your résumé as profile.md. Every job description you add is now mapped against it.`
+          );
+        } else {
+          setNotesFile(name);
+          notesFileRef.current = name;
+          setConvertStatus(
+            opts.replaces
+              ? `Rebuilt ${name} against your profile.`
+              : `Added ${name} and selected it as the meeting knowledge${
+                  profile ? " (mapped against profile.md)" : ""
+                }. Source moved to sources/.`
+          );
+        }
         await reloadGrounding();
-        setConvertStatus(`Added ${name} and selected it as the meeting knowledge. Source moved to sources/.`);
       } catch (e: any) {
         setConvertStatus(`Could not convert ${file}: ${String(e)}`);
       } finally {
@@ -1247,9 +1290,26 @@ export const useRobert = () => {
         setConverting("");
         refreshInbox();
       }
+      // A new profile: rebuild every knowledge file that was converted
+      // without one, so each of them references the résumé too.
+      if (madeProfile) {
+        try {
+          const stale = await invoke<[string, string][]>("robert_list_unprofiled", {
+            notesFolder: notesFolderRef.current,
+          });
+          for (const [note, src] of stale) {
+            setConvertStatus(`Rebuilding ${note} against your profile…`);
+            await convertFileRef.current(src, { fromSources: true, replaces: note });
+          }
+        } catch {
+          /* best effort */
+        }
+      }
     },
     [brainCall, reloadGrounding, refreshInbox]
   );
+  const convertFileRef = useRef(convertFile);
+  convertFileRef.current = convertFile;
 
   // auto-convert: whenever the inbox has files and nothing is running
   useEffect(() => {
@@ -1355,6 +1415,29 @@ export const useRobert = () => {
     };
   }, [refreshLocalStatus]);
 
+  const cancelLocalSetup = useCallback(async () => {
+    try {
+      await invoke("robert_local_cancel");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // First launch: pick the model this machine can run (12b needs ~16 GB RAM,
+  // otherwise e4b), once, unless the user already chose one.
+  useEffect(() => {
+    if (localStorage.getItem("robert.localRecommended") === "1") return;
+    invoke<{ ram_gb: number; model: string; why: string }>("robert_local_recommend")
+      .then((rec) => {
+        localStorage.setItem("robert.localRecommended", "1");
+        if (rec.ram_gb > 0 && rec.model !== localModelRef.current && !localStorage.getItem("robert.localModelChosen")) {
+          setLocalModel(rec.model);
+          localModelRef.current = rec.model;
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const setupLocalBrain = useCallback(async () => {
     setLocalSetup({ stage: "start", status: "Checking Ollama…", completed: 0, total: 0 });
     try {
@@ -1367,6 +1450,16 @@ export const useRobert = () => {
       setLocalSetup({ stage: "error", status: String(e), completed: 0, total: 0 });
     }
   }, []);
+
+  // Done-for-you: with the local brain selected and not ready, start the
+  // setup by itself (once per launch; Cancel stops it).
+  const autoSetupTried = useRef(false);
+  useEffect(() => {
+    if (provider !== "local" || !localStatus || autoSetupTried.current) return;
+    if (localStatus.running && localStatus.has_model) return;
+    autoSetupTried.current = true;
+    setupLocalBrain();
+  }, [provider, localStatus, setupLocalBrain]);
 
   // Re-ground when the notes folder changes (debounced while typing a path)
   // or when a different note file is selected (immediate).
@@ -1426,7 +1519,11 @@ export const useRobert = () => {
     customBaseUrl,
     setCustomBaseUrl,
     localModel,
-    setLocalModel,
+    setLocalModel: (m: string) => {
+      localStorage.setItem("robert.localModelChosen", "1");
+      setLocalModel(m);
+    },
+    cancelLocalSetup,
     persona,
     setPersona,
     notes,

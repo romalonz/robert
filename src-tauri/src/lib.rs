@@ -153,8 +153,11 @@ pub fn run() {
             knowledge::robert_archive_source,
             knowledge::robert_find_profile,
             knowledge::robert_extract_text,
+            knowledge::robert_list_unprofiled,
             local_brain::robert_local_status,
             local_brain::robert_setup_local,
+            local_brain::robert_local_cancel,
+            local_brain::robert_local_recommend,
         ])
         .setup(|app| {
             // Setup main window positioning

@@ -5,9 +5,74 @@
 //! gets a working local brain without a terminal.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter};
+
+/// Set by `robert_local_cancel`; checked inside the download and pull loops.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+fn cancelled() -> Result<(), String> {
+    if CANCEL.load(Ordering::Relaxed) {
+        Err("cancelled".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn robert_local_cancel() {
+    CANCEL.store(true, Ordering::Relaxed);
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct Recommendation {
+    pub ram_gb: f64,
+    pub model: String,
+    pub why: String,
+}
+
+fn total_ram_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+        return String::from_utf8_lossy(&out.stdout).trim().parse().ok();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"])
+            .output()
+            .ok()?;
+        return String::from_utf8_lossy(&out.stdout).trim().parse().ok();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let s = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let kb: u64 = s.lines().find(|l| l.starts_with("MemTotal"))?.split_whitespace().nth(1)?.parse().ok()?;
+        return Some(kb * 1024);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+/// Pick the model this machine can actually run well. gemma4:12b needs about
+/// 9 GB of memory while answering; below 16 GB of RAM the e4b build keeps the
+/// same voice at a quarter of the footprint.
+#[tauri::command]
+pub fn robert_local_recommend() -> Recommendation {
+    let bytes = total_ram_bytes().unwrap_or(0);
+    let gb = bytes as f64 / 1_073_741_824.0;
+    if bytes == 0 {
+        return Recommendation { ram_gb: 0.0, model: "gemma4:12b".into(), why: "RAM unknown; default".into() };
+    }
+    if gb >= 15.0 {
+        Recommendation { ram_gb: gb, model: "gemma4:12b".into(), why: format!("{gb:.0} GB RAM: full 12b model") }
+    } else {
+        Recommendation { ram_gb: gb, model: "gemma4:e4b".into(), why: format!("{gb:.0} GB RAM: lighter e4b model") }
+    }
+}
 
 fn base_url() -> String {
     std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into())
@@ -136,18 +201,32 @@ pub async fn robert_local_status(model: String) -> Result<LocalStatus, String> {
 async fn start_ollama() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").args(["-a", "Ollama"]).spawn();
+        let mut opened = false;
+        for p in ["/Applications/Ollama.app".to_string(), format!("{}/Applications/Ollama.app", std::env::var("HOME").unwrap_or_default())] {
+            if std::path::Path::new(&p).exists() {
+                let _ = std::process::Command::new("open").arg(&p).spawn();
+                opened = true;
+                break;
+            }
+        }
+        if !opened {
+            let _ = std::process::Command::new("open").args(["-a", "Ollama"]).spawn();
+        }
     }
     #[cfg(target_os = "windows")]
     {
         // the tray app starts the server; fall back to `ollama serve`
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             let app = PathBuf::from(&local).join("Programs").join("Ollama").join("ollama app.exe");
             if app.exists() {
-                let _ = std::process::Command::new(app).spawn();
+                let _ = std::process::Command::new(app).creation_flags(CREATE_NO_WINDOW).spawn();
             } else if let Some(bin) = ollama_binary() {
-                let _ = std::process::Command::new(bin).arg("serve").spawn();
+                let _ = std::process::Command::new(bin).arg("serve").creation_flags(CREATE_NO_WINDOW).spawn();
             }
+        } else if let Some(bin) = ollama_binary() {
+            let _ = std::process::Command::new(bin).arg("serve").creation_flags(CREATE_NO_WINDOW).spawn();
         }
     }
     #[cfg(target_os = "linux")]
@@ -176,6 +255,7 @@ async fn download(app: &AppHandle, url: &str, dest: &PathBuf, label: &str) -> Re
     let mut done: u64 = 0;
     let mut last = std::time::Instant::now();
     while let Some(chunk) = stream.next().await {
+        cancelled()?;
         let chunk = chunk.map_err(|e| e.to_string())?;
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
@@ -196,14 +276,23 @@ async fn install_ollama(app: &AppHandle) -> Result<(), String> {
     {
         let exe = tmp.join("OllamaSetup.exe");
         download(app, "https://ollama.com/download/OllamaSetup.exe", &exe, "Downloading Ollama").await?;
-        emit(app, "install", "Installing Ollama", 0, 0);
+        emit(app, "install", "Installing Ollama (silent)", 0, 0);
+        // Inno Setup installer: silent first; if that is refused, run the
+        // normal wizard so the user can click through instead of failing.
         let status = tokio::process::Command::new(&exe)
             .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
             .status()
             .await
             .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err(format!("Ollama installer exited with {status}"));
+        if !status.success() || ollama_binary().is_none() {
+            emit(app, "install", "Installing Ollama: follow the installer window", 0, 0);
+            let status = tokio::process::Command::new(&exe)
+                .status()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !status.success() || ollama_binary().is_none() {
+                return Err(format!("Ollama installer did not complete ({status})"));
+            }
         }
         return Ok(());
     }
@@ -224,6 +313,9 @@ async fn install_ollama(app: &AppHandle) -> Result<(), String> {
         if !status.success() {
             return Err("could not unpack Ollama".into());
         }
+        // launch the app we just unpacked (LaunchServices may not know it yet)
+        let app_path = apps.join("Ollama.app");
+        let _ = std::process::Command::new("open").arg(&app_path).spawn();
         return Ok(());
     }
     #[cfg(target_os = "linux")]
@@ -253,6 +345,7 @@ async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
     let mut buf = String::new();
     let mut last = std::time::Instant::now();
     while let Some(chunk) = stream.next().await {
+        cancelled()?;
         let chunk = chunk.map_err(|e| e.to_string())?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(nl) = buf.find('\n') {
@@ -282,6 +375,7 @@ async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
 /// it, pull the model. Progress arrives on the "robert://local" event.
 #[tauri::command]
 pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalStatus, String> {
+    CANCEL.store(false, Ordering::Relaxed);
     let result: Result<(), String> = async {
         if list_models().await.is_none() {
             if ollama_binary().is_none() {
@@ -292,7 +386,16 @@ pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalSt
         }
         let have = list_models().await.unwrap_or_default();
         if !have.iter().any(|m| model_matches(m, &model)) {
-            pull_model(&app, &model).await?;
+            // one retry: Ollama resumes partial downloads, so a dropped
+            // connection just continues where it stopped
+            if let Err(e) = pull_model(&app, &model).await {
+                if e == "cancelled" {
+                    return Err(e);
+                }
+                emit(&app, "pull", &format!("Retrying download ({e})"), 0, 0);
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                pull_model(&app, &model).await?;
+            }
         }
         Ok(())
     }
