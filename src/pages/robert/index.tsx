@@ -43,6 +43,28 @@ function labelOf(root: string): string {
   return root.split(".").pop() || root;
 }
 
+const FIELD =
+  "h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs text-neutral-100 outline-none focus:border-neutral-500 placeholder:text-neutral-600";
+const BTN =
+  "h-7 px-2.5 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50 text-neutral-200";
+
+/// One settings row: uppercase header on the left (hover it for the
+/// explanation), controls on the right. Keeps the panel free of paragraphs.
+function Section({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className="w-[76px] shrink-0 h-7 flex items-center text-[10px] uppercase tracking-wide text-neutral-500 cursor-help select-none"
+        title={hint}
+      >
+        {title}
+        <span className="ml-1 text-neutral-700">ⓘ</span>
+      </span>
+      <div className="flex-1 flex items-center gap-2 flex-wrap min-w-0">{children}</div>
+    </div>
+  );
+}
+
 export default function Robert() {
   const r = useRobert();
   const [showNotes, setShowNotes] = useState(false);
@@ -312,250 +334,169 @@ export default function Robert() {
         )}
       </div>
 
-      {/* Settings: scroll down to adjust */}
-      <div className="px-3 pb-3 pt-2 border-t border-neutral-800/50 flex flex-col gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-neutral-600">
-          Settings
-        </span>
-        <div className="flex gap-2 flex-wrap items-end">
-          <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
-            <span className="text-[10px] text-neutral-400">
-              Listen to app{" "}
-              {r.running && (
-                <span className="text-emerald-400">
-                  (tapping: {r.target})
-                </span>
-              )}
-            </span>
-            <div className="flex gap-1">
-              <select
-                value={targetInList ? r.target : "__current"}
-                onChange={(e) => {
-                  if (e.target.value !== "__current") r.setTarget(e.target.value);
-                }}
-                className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 flex-1"
-              >
-                {!targetInList && (
-                  <option value="__current">{r.target} (not running now)</option>
-                )}
-                {apps.map((a) => (
-                  <option key={a.value} value={a.value}>
-                    {a.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={r.refreshProcesses}
-                className="h-7 px-2 text-[10px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-                title="Refresh list of audio apps"
-              >
-                ↻
-              </button>
-            </div>
+      {/* Settings: one row per section, header left, controls right. Explanations
+          live in tooltips (hover the header), not in the panel. */}
+      <div className="px-3 pb-3 pt-2 border-t border-neutral-800/50 flex flex-col gap-2.5">
+        <Section
+          title="Listen to"
+          hint="Robert captures that app's whole audio output (Teams, Zoom, a browser tab…). Changing the app while running restarts capture."
+        >
+          <select
+            value={targetInList ? r.target : "__current"}
+            onChange={(e) => {
+              if (e.target.value !== "__current") r.setTarget(e.target.value);
+            }}
+            className={FIELD + " flex-1 min-w-[180px]"}
+          >
+            {!targetInList && (
+              <option value="__current">{r.target} (not running now)</option>
+            )}
+            {apps.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+          <button onClick={r.refreshProcesses} className={BTN} title="Refresh the list of audio apps">
+            ↻
+          </button>
+          {r.running && <span className="text-[10px] text-emerald-400">tapping {r.target}</span>}
+          <label className="h-7 flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer ml-auto shrink-0" title="Start listening as soon as Robert opens">
+            <input type="checkbox" checked={r.autoStart} onChange={(e) => r.setAutoStart(e.target.checked)} />
+            auto-start
           </label>
-          <span className="text-[10px] text-neutral-600 self-center">
-            {r.running
-              ? "changing app auto-restarts capture"
-              : "captures that app's whole audio output"}
-          </span>
-        </div>
-        <div className="flex gap-2 items-end flex-wrap">
-          <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
-            <span className="text-[10px] text-neutral-400 truncate leading-4">
-              Brain
-            </span>
-            <select
-              value={r.provider}
-              onChange={(e) => r.setProvider(e.target.value as any)}
-              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
-            >
-              <option value="local">Local (Ollama) — no key needed</option>
-              {CLOUD_PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {r.provider === "local" && (
-            <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
-              <span className="text-[10px] text-neutral-400 truncate leading-4">
-                Local model (Ollama)
-              </span>
+        </Section>
+
+        <Section
+          title="Brain"
+          hint="Local (default) runs fully on this machine through Ollama: no key, no cloud. Or bring your own key for DeepSeek, Claude, OpenAI, Groq, Gemini, OpenRouter, xAI, Mistral, or any OpenAI-compatible API. Audio is always transcribed on-device."
+        >
+          <select value={r.provider} onChange={(e) => r.setProvider(e.target.value as any)} className={FIELD + " min-w-[170px]"}>
+            <option value="local">Local (Ollama)</option>
+            {CLOUD_PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          {r.provider === "local" ? (
+            <>
               <input
                 value={r.localModel}
                 onChange={(e) => r.setLocalModel(e.target.value)}
                 placeholder="gemma4:12b"
-                className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
+                title="Ollama model. Picked for your RAM on first run: gemma4:12b with 16 GB or more, gemma4:e4b below."
+                className={FIELD + " w-[130px]"}
               />
-            </label>
-          )}
-          {r.provider === "local" && (
-            <div className="flex flex-col gap-1 flex-1 min-w-[220px]">
-              <span className="text-[10px] text-neutral-400 truncate leading-4">
-                Local brain status
-              </span>
-              <div className="h-7 flex items-center gap-2 text-[11px]">
-                {r.localStatus === null ? (
-                  <span className="text-neutral-500">checking…</span>
-                ) : r.localStatus.running && r.localStatus.has_model ? (
-                  <span className="text-emerald-400 truncate">
-                    ready · Ollama running · {r.localModel} installed
+              {r.localStatus === null ? (
+                <span className="text-[11px] text-neutral-500">checking…</span>
+              ) : r.localStatus.running && r.localStatus.has_model ? (
+                <span className="text-[11px] text-emerald-400 truncate">ready · {r.localModel}</span>
+              ) : (
+                <>
+                  <span className="text-[11px] text-amber-400 truncate">
+                    {!r.localStatus.installed
+                      ? "Ollama not installed"
+                      : !r.localStatus.running
+                      ? "Ollama not running"
+                      : `${r.localModel} not downloaded`}
                   </span>
-                ) : (
-                  <>
-                    <span className="text-amber-400 truncate">
-                      {!r.localStatus.installed
-                        ? "Ollama not installed"
-                        : !r.localStatus.running
-                        ? "Ollama not running"
-                        : `${r.localModel} not downloaded`}
-                    </span>
-                    {r.localSetup && !["done", "error"].includes(r.localSetup.stage) ? (
-                      <button
-                        onClick={r.cancelLocalSetup}
-                        className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-                        title="Stop the download. Robert resumes where it left off next time."
-                      >
-                        Cancel
-                      </button>
-                    ) : (
-                      <button
-                        onClick={r.setupLocalBrain}
-                        className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-                        title="Installs Ollama if needed and downloads the model (about 7.5 GB for gemma4:12b, 3 GB for gemma4:e4b)"
-                      >
-                        Set up local brain
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-              {r.localSetup && r.localSetup.stage !== "done" && (
-                <div className="flex flex-col gap-0.5">
-                  <div className="h-1.5 w-full bg-neutral-800 rounded overflow-hidden">
-                    <div
-                      className={`h-full ${r.localSetup.stage === "error" ? "bg-red-500" : "bg-emerald-500"}`}
-                      style={{
-                        width: r.localSetup.total
-                          ? `${Math.min(100, Math.round((100 * r.localSetup.completed) / r.localSetup.total))}%`
-                          : "8%",
-                      }}
-                    />
-                  </div>
-                  <span className={`text-[10px] truncate ${r.localSetup.stage === "error" ? "text-red-400" : "text-neutral-500"}`}>
-                    {r.localSetup.status}
-                    {r.localSetup.total
-                      ? ` · ${(r.localSetup.completed / 1e9).toFixed(1)} / ${(r.localSetup.total / 1e9).toFixed(1)} GB`
-                      : ""}
-                  </span>
-                </div>
+                  {r.localSetup && !["done", "error"].includes(r.localSetup.stage) ? (
+                    <button onClick={r.cancelLocalSetup} className={BTN} title="Stop the download; it resumes where it left off next time">
+                      Cancel
+                    </button>
+                  ) : (
+                    <button onClick={r.setupLocalBrain} className={BTN} title="Installs Ollama if needed and downloads the model (7.5 GB for gemma4:12b, 3 GB for gemma4:e4b)">
+                      Set up
+                    </button>
+                  )}
+                </>
               )}
-            </div>
-          )}
-          {r.provider !== "local" && (
+            </>
+          ) : (
             <>
-              <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
-                <span className="text-[10px] text-neutral-400 truncate leading-4">
-                  {CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.label} key
-                </span>
-                <input
-                  type="password"
-                  value={r.apiKey}
-                  onChange={(e) => r.setApiKey(e.target.value)}
-                  placeholder={
-                    CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.keyHint
-                  }
-                  className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
-                />
-              </label>
-              <label className="flex flex-col gap-1 flex-1 min-w-[180px]">
-                <span className="text-[10px] text-neutral-400 truncate leading-4">
-                  Model
-                </span>
-                <input
-                  value={r.model}
-                  onChange={(e) => r.setModel(e.target.value)}
-                  placeholder={
-                    CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.defaultModel
-                  }
-                  className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
-                />
-              </label>
+              <input
+                type="password"
+                value={r.apiKey}
+                onChange={(e) => r.setApiKey(e.target.value)}
+                placeholder={`${CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.label} key (${CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.keyHint})`}
+                className={FIELD + " flex-1 min-w-[160px]"}
+              />
+              <input
+                value={r.model}
+                onChange={(e) => r.setModel(e.target.value)}
+                placeholder={`model: ${CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.defaultModel}`}
+                className={FIELD + " w-[170px]"}
+              />
             </>
           )}
-          <button
-            onClick={r.testBrain}
-            disabled={r.brainTest.status === "testing"}
-            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50"
-            title="Send a tiny test request to the selected brain"
-          >
+          <button onClick={r.testBrain} disabled={r.brainTest.status === "testing"} className={BTN} title="Send a tiny test request to the selected brain">
             {r.brainTest.status === "testing" ? "Testing…" : "Test"}
           </button>
-        </div>
-        {r.brainTest.status === "ok" && (
-          <span className="text-[10px] text-emerald-400">
-            ✓ Brain is ready — key accepted, model replied: “{r.brainTest.detail}”
-          </span>
-        )}
-        {r.brainTest.status === "fail" && (
-          <span className="text-[10px] text-red-400">
-            ✗ Brain test failed: {r.brainTest.detail}
-          </span>
-        )}
-        {r.provider === "custom" && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] text-neutral-400">
-              Custom base URL (OpenAI-compatible, e.g. https://api.example.com/v1)
-            </span>
+          {r.brainTest.status === "ok" && (
+            <span className="text-[10px] text-emerald-400 basis-full">✓ key accepted, model replied: “{r.brainTest.detail}”</span>
+          )}
+          {r.brainTest.status === "fail" && (
+            <span className="text-[10px] text-red-400 basis-full">✗ {r.brainTest.detail}</span>
+          )}
+          {r.provider === "custom" && (
             <input
               value={r.customBaseUrl}
               onChange={(e) => r.setCustomBaseUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 font-mono"
+              placeholder="custom base URL, OpenAI-compatible: https://api.example.com/v1"
+              className={FIELD + " basis-full font-mono"}
             />
-          </label>
-        )}
-        <div className="flex gap-2 items-end flex-wrap">
-          <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
-            <span className="text-[10px] text-neutral-400 truncate leading-4">
-              Notes folder (.md files)
-            </span>
-            <input
-              value={r.notesFolder}
-              onChange={(e) => r.setNotesFolder(e.target.value)}
-              placeholder="~/RobertNotes"
-              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 font-mono"
-            />
-          </label>
-          <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
-            <span className="text-[10px] text-neutral-400 truncate leading-4">
-              Meeting knowledge source
-            </span>
-            <select
-              value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
-              onChange={(e) => r.setNotesFile(e.target.value)}
-              className="h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500"
-            >
-              <option value="">Auto — robert-brief.md, else all notes</option>
-              {r.notesList.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            onClick={r.reloadGrounding}
-            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-            title="Reload notes from the folder"
+          )}
+          {r.provider === "local" && r.localSetup && r.localSetup.stage !== "done" && (
+            <div className="basis-full flex flex-col gap-0.5">
+              <div className="h-1.5 w-full bg-neutral-800 rounded overflow-hidden">
+                <div
+                  className={`h-full ${r.localSetup.stage === "error" ? "bg-red-500" : "bg-emerald-500"}`}
+                  style={{
+                    width: r.localSetup.total
+                      ? `${Math.min(100, Math.round((100 * r.localSetup.completed) / r.localSetup.total))}%`
+                      : "8%",
+                  }}
+                />
+              </div>
+              <span className={`text-[10px] truncate ${r.localSetup.stage === "error" ? "text-red-400" : "text-neutral-500"}`}>
+                {r.localSetup.status}
+                {r.localSetup.total
+                  ? ` · ${(r.localSetup.completed / 1e9).toFixed(1)} / ${(r.localSetup.total / 1e9).toFixed(1)} GB`
+                  : ""}
+              </span>
+            </div>
+          )}
+        </Section>
+
+        <Section
+          title="Knowledge"
+          hint="Your notes folder (any folder of Markdown; an Obsidian vault works). Pick one file for this meeting or leave Auto: robert-brief.md wins, otherwise all notes. Add file (or drop a file on this window): résumé, job description, agenda, handover… Robert rewrites it into a knowledge file, starting with your résumé as profile.md."
+        >
+          <input
+            value={r.notesFolder}
+            onChange={(e) => r.setNotesFolder(e.target.value)}
+            placeholder="~/RobertNotes"
+            title="Notes folder"
+            className={FIELD + " w-[150px] font-mono"}
+          />
+          <select
+            value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
+            onChange={(e) => r.setNotesFile(e.target.value)}
+            title="Meeting knowledge for this call"
+            className={FIELD + " flex-1 min-w-[200px]"}
           >
-            Reload notes
+            <option value="">Auto: robert-brief.md, else all notes</option>
+            {r.notesList.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+          <button onClick={r.reloadGrounding} className={BTN} title="Reload notes and persona from the folder">
+            Reload
           </button>
-          <label
-            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 flex items-center cursor-pointer"
-            title="Add a job description, agenda, handover, résumé… (pdf, docx, txt, html, csv, md). Robert rewrites it into its knowledge format. You can also drop files onto this window."
-          >
+          <label className={BTN + " flex items-center cursor-pointer"} title="Add a résumé, job description, agenda, handover… (pdf, docx, txt, html, csv, md). Robert rewrites it into its knowledge format. You can also drop files onto this window.">
             Add file
             <input
               type="file"
@@ -568,163 +509,98 @@ export default function Robert() {
               }}
             />
           </label>
-          <label className="h-7 flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer ml-auto shrink-0">
-            <input
-              type="checkbox"
-              checked={r.autoStart}
-              onChange={(e) => r.setAutoStart(e.target.checked)}
-            />
-            auto-start
-          </label>
-        </div>
-        {(r.inbox.length > 0 || r.convertStatus) && (
-          <div className="flex flex-col gap-1 text-[11px]">
-            {r.inbox.map((f) => (
-              <div key={f} className="flex items-center gap-2 text-neutral-400">
-                <span className="truncate">
-                  {r.converting === f ? "converting" : "waiting"}: {f}
-                </span>
-                {r.converting !== f && (
-                  <button
-                    onClick={() => r.convertFile(f)}
-                    disabled={!!r.converting}
-                    className="h-6 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0 disabled:opacity-50"
-                  >
-                    Rewrite to Robert format
-                  </button>
-                )}
-              </div>
-            ))}
-            {r.convertStatus && (
-              <span className={`text-[10px] ${r.convertStatus.startsWith("Could not") ? "text-red-400" : "text-neutral-500"}`}>
-                {r.converting ? "⏳ " : ""}
-                {r.convertStatus}
-              </span>
+          <span className="basis-full flex items-center gap-2 text-[10px] text-neutral-500">
+            <span className="truncate">
+              {r.notes
+                ? `loaded ${r.groundingSource} (${r.notes.length.toLocaleString()} chars)`
+                : "no meeting knowledge loaded yet"}
+            </span>
+            {r.notes && (
+              <button onClick={() => setShowNotes((v) => !v)} className="shrink-0 text-neutral-400 hover:text-neutral-200 underline underline-offset-2">
+                {showNotes ? "hide" : "view"}
+              </button>
             )}
-          </div>
-        )}
-        <div className="flex items-center gap-4 flex-wrap text-[10px] text-neutral-600">
-          <span>
-            Point this at any folder of Markdown (an Obsidian vault works as-is).
-            A robert-brief.md inside it becomes the meeting brief and wins over
-            everything else. Drop any pdf, docx, txt, or html on this window, use
-            Add file, or copy it into the folder: Robert always rewrites it into
-            a knowledge file. Start with your résumé; it becomes profile.md.
           </span>
-
-        </div>
-        <div className="flex flex-col gap-1.5 border-t border-neutral-800/50 pt-2">
-          <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-400">
-            <span className="text-[10px] uppercase tracking-wide text-neutral-600">
-              Group calls
-            </span>
-            <input
-              value={r.myName}
-              onChange={(e) => r.setMyName(e.target.value)}
-              placeholder="your first name, plus how people mishear it: Alex, Alec"
-              className="h-7 flex-1 min-w-[220px] bg-neutral-800 border border-neutral-700 rounded px-2 text-xs text-neutral-200 placeholder:text-neutral-600"
+          {showNotes && r.notes && (
+            <textarea
+              value={r.notes}
+              readOnly
+              rows={8}
+              className="basis-full bg-neutral-900/40 border border-neutral-800 rounded px-2 py-1 text-xs outline-none font-mono resize-y text-neutral-400"
             />
-            <select
-              value={r.callType}
-              onChange={(e) => r.setCallType(e.target.value as any)}
-              className="h-7 bg-neutral-800 border border-neutral-700 rounded px-2 text-xs text-neutral-200"
-              title="Auto switches to group once two colleagues have been addressed by name"
-            >
-              <option value="auto">call type: auto</option>
-              <option value="one">1:1 call</option>
-              <option value="group">group call</option>
-            </select>
-          </div>
-          <span className="text-[10px] text-neutral-600">
-            With your name set, Robert knows when a question is yours, when it
-            is a colleague's (it stays quiet), and when the floor is handed to
-            you (it has your update ready).
-          </span>
-          <div className="flex items-center gap-4 flex-wrap text-[11px] text-neutral-400">
-            <span className="text-[10px] uppercase tracking-wide text-neutral-600">
-              Meeting memory
+          )}
+          {r.inbox.map((f) => (
+            <span key={f} className="basis-full flex items-center gap-2 text-[11px] text-neutral-400">
+              <span className="truncate">
+                {r.converting === f ? "converting" : "waiting"}: {f}
+              </span>
+              {r.converting !== f && (
+                <button onClick={() => r.convertFile(f)} disabled={!!r.converting} className={BTN}>
+                  Rewrite now
+                </button>
+              )}
             </span>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={r.recordMeetings}
-                onChange={(e) => r.setRecordMeetings(e.target.checked)}
-              />
-              record meetings (transcript + takeaways, local only)
-            </label>
-            <span className="text-neutral-500">
-              what Robert learns in each meeting is always used in answers
+          ))}
+          {r.convertStatus && (
+            <span className={`basis-full text-[10px] ${r.convertStatus.startsWith("Could not") ? "text-red-400" : "text-neutral-500"}`}>
+              {r.converting ? "⏳ " : ""}
+              {r.convertStatus}
             </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-400 border-t border-neutral-800/50 pt-2">
-          <span className="text-[10px] uppercase tracking-wide text-neutral-600">
-            Persona &amp; rules
-          </span>
-          <span className="font-mono text-neutral-300">{r.personaFile}</span>
-          <span className="text-neutral-500 truncate max-w-[260px]" title={r.persona.split("\n")[0]}>
-            {r.personaCustomized ? "customized" : "default"} · {r.persona.length.toLocaleString()} chars ·{" "}
-            {r.persona.split("\n")[0].replace(/^#+\s*/, "").slice(0, 60)}
-          </span>
-          <button
-            onClick={r.openPersona}
-            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-            title="Open the persona file in your editor. Robert re-reads it on Reload and on Start."
+          )}
+        </Section>
+
+        <Section
+          title="Group calls"
+          hint="With your name set, Robert knows when a question is yours, when it is a colleague's (it stays quiet), and when the floor is handed to you (it has your update ready). Call type Auto switches to group once two colleagues have been addressed by name."
+        >
+          <input
+            value={r.myName}
+            onChange={(e) => r.setMyName(e.target.value)}
+            placeholder="your first name, plus how people mishear it: Alex, Alec"
+            className={FIELD + " flex-1 min-w-[220px]"}
+          />
+          <select value={r.callType} onChange={(e) => r.setCallType(e.target.value as any)} className={FIELD}>
+            <option value="auto">call type: auto</option>
+            <option value="one">1:1 call</option>
+            <option value="group">group call</option>
+          </select>
+        </Section>
+
+        <Section
+          title="Memory"
+          hint="Recording logs the transcript locally and writes takeaways when you press Stop. What Robert learns in each meeting (your answers, facts, people, decisions) is always used in later answers; it lives in the notes folder as plain files."
+        >
+          <label className="h-7 flex items-center gap-1.5 text-[11px] text-neutral-300 cursor-pointer">
+            <input type="checkbox" checked={r.recordMeetings} onChange={(e) => r.setRecordMeetings(e.target.checked)} />
+            record meetings (transcript + takeaways, local only)
+          </label>
+        </Section>
+
+        <Section
+          title="Persona"
+          hint="How Robert talks and what it never does. It is a file in your notes folder: open it in any editor, press Reload. Meeting facts do not belong there. While you have not edited it, app updates to the default persona apply automatically."
+        >
+          <span className="h-7 flex items-center font-mono text-[12px] text-neutral-100">{r.personaFile}</span>
+          <span
+            className={`h-5 px-1.5 rounded-full border text-[10px] flex items-center ${
+              r.personaCustomized ? "border-sky-700 text-sky-300" : "border-neutral-600 text-neutral-300"
+            }`}
           >
+            {r.personaCustomized ? "customized" : "default"}
+          </span>
+          <span className="text-[11px] text-neutral-400">{r.persona.length.toLocaleString()} chars</span>
+          <button onClick={r.openPersona} className={BTN} title="Open the persona file in your editor">
             Open
           </button>
-          <button
-            onClick={r.reloadPersona}
-            className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-            title="Re-read the file after editing"
-          >
+          <button onClick={r.reloadPersona} className={BTN} title="Re-read the file after editing">
             Reload
           </button>
           {r.personaCustomized && (
-            <button
-              onClick={r.resetPersona}
-              className="h-7 px-2 text-[11px] rounded border border-neutral-700 hover:bg-neutral-800 shrink-0"
-              title="Overwrite the file with Robert's default persona"
-            >
+            <button onClick={r.resetPersona} className={BTN} title="Overwrite the file with Robert's default persona">
               Reset to default
             </button>
           )}
-          <span className="text-[10px] text-neutral-600 basis-full">
-            Generic behavior rules only; meeting facts belong in knowledge files.
-            Edit the file in any editor and press Reload.
-          </span>
-        </div>
-        {/* Meeting knowledge receipt: one line confirming what loaded; the
-            full content is inspectable on demand, not permanently displayed. */}
-        <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-          <span className="truncate">
-            {r.notes
-              ? `Meeting knowledge loaded from ${r.groundingSource} (${r.notes.length.toLocaleString()} chars)`
-              : "No meeting knowledge loaded yet — add .md files to the notes folder."}
-          </span>
-          {r.notes && (
-            <button
-              onClick={() => setShowNotes((v) => !v)}
-              className="shrink-0 text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
-            >
-              {showNotes ? "Hide" : "View"}
-            </button>
-          )}
-        </div>
-        {showNotes && r.notes && (
-          <textarea
-            value={r.notes}
-            readOnly
-            rows={8}
-            className="bg-neutral-900/40 border border-neutral-800 rounded px-2 py-1 text-xs outline-none font-mono resize-y text-neutral-400"
-          />
-        )}
-        <span className="text-[10px] text-neutral-600">
-          The local brain (default) runs fully on this machine via Ollama — no
-          key, no cloud. Or bring your own key for DeepSeek, Claude, OpenAI,
-          Groq, Gemini, OpenRouter, xAI, Mistral, or any OpenAI-compatible API.
-          Audio is always transcribed on-device. Drag the window by the top bar.
-        </span>
+        </Section>
       </div>
     </div>
   );

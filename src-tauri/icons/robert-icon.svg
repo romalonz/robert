@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2f36"/>
+      <stop offset="1" stop-color="#15171b"/>
+    </linearGradient>
+  </defs>
+  <!-- rounded background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" fill="url(#bg)"/>
+
+  <!-- suit shoulders -->
+  <path d="M96 1024 C104 810 230 720 400 680 L512 790 L624 680 C794 720 920 810 928 1024 Z" fill="#1f2937"/>
+  <!-- lapels -->
+  <path d="M400 680 L512 940 L452 760 Z" fill="#111827"/>
+  <path d="M624 680 L512 940 L572 760 Z" fill="#111827"/>
+  <!-- shirt -->
+  <path d="M420 660 L512 800 L604 660 L570 630 L512 690 L454 630 Z" fill="#f3f4f6"/>
+  <!-- tie -->
+  <path d="M512 700 L486 738 L500 880 L512 960 L524 880 L538 738 Z" fill="#b91c1c"/>
+  <path d="M512 692 L484 726 L512 752 L540 726 Z" fill="#7f1d1d"/>
+
+  <!-- neck -->
+  <rect x="456" y="560" width="112" height="110" rx="30" fill="#e0b48f"/>
+
+  <!-- beard (big, braided, blond) -->
+  <path d="M326 520 C310 610 340 690 410 712 C455 730 480 700 512 706 C544 700 569 730 614 712 C684 690 714 610 698 520 C656 560 590 580 512 580 C434 580 368 560 326 520 Z" fill="#c98a3a"/>
+  <path d="M410 712 C430 640 470 610 512 610 C554 610 594 640 614 712 C580 706 550 690 512 700 C474 690 444 706 410 712 Z" fill="#b5762b"/>
+  <!-- beard braid rings -->
+  <rect x="384" y="640" width="60" height="20" rx="10" fill="#d1d5db"/>
+  <rect x="580" y="640" width="60" height="20" rx="10" fill="#d1d5db"/>
+
+  <!-- face -->
+  <path d="M340 380 C340 300 400 250 512 250 C624 250 684 300 684 380 L684 520 C684 560 600 600 512 600 C424 600 340 560 340 520 Z" fill="#edc4a0"/>
+  <!-- ears -->
+  <ellipse cx="330" cy="470" rx="26" ry="38" fill="#e0b48f"/>
+  <ellipse cx="694" cy="470" rx="26" ry="38" fill="#e0b48f"/>
+
+  <!-- moustache -->
+  <path d="M400 530 C440 500 480 505 512 525 C544 505 584 500 624 530 C600 560 560 560 512 545 C464 560 424 560 400 530 Z" fill="#c98a3a"/>
+
+  <!-- eyes: stern brows, dark eyes -->
+  <path d="M380 410 C410 385 460 385 500 405 L494 425 C458 410 416 412 386 430 Z" fill="#6b4a1e"/>
+  <path d="M644 410 C614 385 564 385 524 405 L530 425 C566 410 608 412 638 430 Z" fill="#6b4a1e"/>
+  <ellipse cx="445" cy="452" rx="20" ry="14" fill="#ffffff"/>
+  <ellipse cx="579" cy="452" rx="20" ry="14" fill="#ffffff"/>
+  <circle cx="447" cy="453" r="9" fill="#1f2937"/>
+  <circle cx="577" cy="453" r="9" fill="#1f2937"/>
+  <!-- nose -->
+  <path d="M512 440 L496 505 L528 505 Z" fill="#d9a983"/>
+
+  <!-- helmet -->
+  <path d="M300 372 C300 220 400 140 512 140 C624 140 724 220 724 372 C724 392 700 400 680 400 L344 400 C324 400 300 392 300 372 Z" fill="#9aa3ad"/>
+  <path d="M300 372 C300 220 400 140 512 140 L512 400 L344 400 C324 400 300 392 300 372 Z" fill="#aab3bd"/>
+  <!-- helmet rim -->
+  <rect x="290" y="372" width="444" height="40" rx="20" fill="#6b7280"/>
+  <!-- helmet center ridge -->
+  <rect x="500" y="150" width="24" height="230" rx="12" fill="#6b7280"/>
+  <!-- rivets -->
+  <circle cx="360" cy="392" r="8" fill="#4b5563"/>
+  <circle cx="430" cy="392" r="8" fill="#4b5563"/>
+  <circle cx="594" cy="392" r="8" fill="#4b5563"/>
+  <circle cx="664" cy="392" r="8" fill="#4b5563"/>
+  <!-- horns -->
+  <path d="M300 340 C220 320 150 250 160 150 C230 190 270 260 320 300 Z" fill="#f5e6c8"/>
+  <path d="M300 340 C250 320 200 270 185 190 C230 230 265 280 320 300 Z" fill="#e2cfa8"/>
+  <path d="M724 340 C804 320 874 250 864 150 C794 190 754 260 704 300 Z" fill="#f5e6c8"/>
+  <path d="M724 340 C774 320 824 270 839 190 C794 230 759 280 704 300 Z" fill="#e2cfa8"/>
+</svg>
