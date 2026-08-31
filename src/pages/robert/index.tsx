@@ -113,7 +113,7 @@ function VoicePicker({
   const toggle = (id: string) =>
     setSel((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= max ? cur : [...cur, id]));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 rounded-2xl">
       <div className="w-full max-w-[620px] h-[82vh] flex flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
         <div className="px-4 pt-3 pb-2 border-b border-neutral-800">
           <div className="text-sm font-semibold">{title}</div>
@@ -190,6 +190,51 @@ function Section({ title, hint, children }: { title: string; hint: string; child
       </span>
       <div className="flex-1 flex items-center gap-2 flex-wrap min-w-0">{children}</div>
     </div>
+  );
+}
+
+type Opt = { value: string; label: string; hint?: string };
+/// A dropdown that opens as a clean, grown-window modal (like the voice picker)
+/// instead of a cramped native select. Single-select, searchable when long.
+function SelectField({ value, options, onChange, placeholder, openKey, openPicker, setOpenPicker, className }: {
+  value: string; options: Opt[]; onChange: (v: string) => void; placeholder?: string;
+  openKey: string; openPicker: string | null; setOpenPicker: (k: string | null) => void; className?: string;
+}) {
+  const open = openPicker === openKey;
+  const [q, setQ] = useState("");
+  const cur = options.find((o) => o.value === value);
+  const list = q.trim() ? options.filter((o) => (o.label + " " + (o.hint || "")).toLowerCase().includes(q.trim().toLowerCase())) : options;
+  return (
+    <>
+      <button type="button" onClick={() => setOpenPicker(open ? null : openKey)}
+        className={(className || FIELD) + " flex items-center justify-between gap-2 text-left"}>
+        <span className="truncate">{cur ? cur.label : (placeholder || "Select…")}</span>
+        <span className="opacity-50 shrink-0 text-[10px]">▾</span>
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 rounded-2xl" onClick={() => setOpenPicker(null)}>
+          <div className="w-full max-w-[520px] max-h-[82vh] flex flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            {options.length > 8 && (
+              <div className="p-2 border-b border-neutral-800">
+                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
+                  className="h-7 w-full bg-neutral-800 border border-neutral-700 rounded px-2 text-xs text-neutral-100 outline-none focus:border-neutral-500 placeholder:text-neutral-600" />
+              </div>
+            )}
+            <div className="flex-1 overflow-y-auto p-2">
+              {list.map((o) => (
+                <button key={o.value} type="button"
+                  onClick={() => { onChange(o.value); setOpenPicker(null); setQ(""); }}
+                  className={`w-full text-left flex flex-col px-2 py-1.5 rounded ${o.value === value ? "bg-sky-950/50 border border-sky-800" : "border border-transparent hover:bg-neutral-800/60"}`}>
+                  <span className="text-[12px] text-neutral-100">{o.label}</span>
+                  {o.hint && <span className="text-[11px] text-neutral-500 leading-snug">{o.hint}</span>}
+                </button>
+              ))}
+              {list.length === 0 && <div className="text-[11px] text-neutral-500 px-2 py-3">No matches.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -301,10 +346,11 @@ export default function Robert() {
   // Flexible: expands for stacked answers or a long Respond, retracts to a
   // slim bar when there's little to show. Capped to ~70% of the screen.
   const answerRef = useRef<HTMLDivElement>(null);
+  const [openPicker, setOpenPicker] = useState<string | null>(null);
   // A modal (voice picker, onboarding, consent) needs real room; the window is
   // otherwise a short bar and a viewport-sized modal renders tiny.
   const modalOpen =
-    !!r.pendingSetup || r.voicePickerOpen || r.onboardingStep !== null;
+    !!r.pendingSetup || r.voicePickerOpen || r.onboardingStep !== null || openPicker !== null;
   useEffect(() => {
     if (!modalOpen) return;
     const screenH = window.screen?.availHeight ?? 900;
@@ -343,13 +389,13 @@ export default function Robert() {
 
   return (
     <div
-      className="h-screen w-full overflow-y-auto bg-neutral-950/70 backdrop-blur-2xl text-neutral-100 select-text text-[13px]"
+      className="h-screen w-full overflow-y-auto rounded-2xl bg-neutral-950/70 backdrop-blur-2xl text-neutral-100 select-text text-[13px]"
       style={{ ["--cursor-type" as any]: "default" }}
     >
       <UpdateBanner />
       {/* Consent gate: no install/download happens until the user says Continue */}
       {r.pendingSetup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 rounded-2xl">
           <div className="w-full max-w-[420px] rounded-lg border border-neutral-700 bg-neutral-900 p-4 shadow-xl">
             <div className="text-sm font-semibold mb-1">
               {r.pendingSetup === "vision" ? "Download the vision model?" : "Set up the local AI brain?"}
@@ -405,7 +451,7 @@ export default function Robert() {
 
       {/* First-run onboarding: step 1 résumé (recommended), step 2 voice */}
       {r.onboardingStep === "resume" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 rounded-2xl">
           <div className="w-full max-w-[440px] rounded-lg border border-neutral-700 bg-neutral-900 p-5 shadow-xl">
             <div className="text-sm font-semibold mb-1">Welcome to Robert. Add your résumé?</div>
             <p className="text-[12px] leading-6 text-neutral-400">
@@ -675,22 +721,16 @@ export default function Robert() {
           title="Listen to"
           hint="Robert captures that app's whole audio output (Teams, Zoom, a browser tab…). Changing the app while running restarts capture."
         >
-          <select
-            value={targetInList ? r.target : "__current"}
-            onChange={(e) => {
-              if (e.target.value !== "__current") r.setTarget(e.target.value);
-            }}
+          <SelectField
+            openKey="listen" openPicker={openPicker} setOpenPicker={setOpenPicker}
             className={FIELD + " flex-1 min-w-[180px]"}
-          >
-            {!targetInList && (
-              <option value="__current">{r.target} (not running now)</option>
-            )}
-            {apps.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
-            ))}
-          </select>
+            value={targetInList ? r.target : "__current"}
+            onChange={(v) => { if (v !== "__current") r.setTarget(v); }}
+            options={[
+              ...(!targetInList ? [{ value: "__current", label: `${r.target} (not running now)` }] : []),
+              ...apps.map((a) => ({ value: a.value, label: a.label })),
+            ]}
+          />
           <button onClick={r.refreshProcesses} className={BTN} title="Refresh the list of audio apps">
             ↻
           </button>
@@ -705,14 +745,13 @@ export default function Robert() {
           title="Brain"
           hint="Local (default) runs fully on this machine through Ollama: no key, no cloud. Or bring your own key for DeepSeek, Claude, OpenAI, Groq, Gemini, OpenRouter, xAI, Mistral, or any OpenAI-compatible API. Audio is always transcribed on-device."
         >
-          <select value={r.provider} onChange={(e) => r.setProvider(e.target.value as any)} className={FIELD + " min-w-[170px]"}>
-            <option value="local">Local (Ollama)</option>
-            {CLOUD_PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <SelectField
+            openKey="brain" openPicker={openPicker} setOpenPicker={setOpenPicker}
+            className={FIELD + " min-w-[170px]"}
+            value={r.provider}
+            onChange={(v) => r.setProvider(v as any)}
+            options={[{ value: "local", label: "Local (Ollama)" }, ...CLOUD_PROVIDERS.map((p) => ({ value: p.id, label: p.label }))]}
+          />
           {r.provider === "local" ? (
             <>
               <input
@@ -835,19 +874,13 @@ export default function Robert() {
             title="Notes folder"
             className={FIELD + " w-[150px] font-mono"}
           />
-          <select
-            value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
-            onChange={(e) => r.setNotesFile(e.target.value)}
-            title="Meeting knowledge for this call"
+          <SelectField
+            openKey="knowledge" openPicker={openPicker} setOpenPicker={setOpenPicker}
             className={FIELD + " flex-1 min-w-[200px]"}
-          >
-            <option value="">Auto: robert-brief.md, else all notes</option>
-            {r.notesList.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
+            value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
+            onChange={(v) => r.setNotesFile(v)}
+            options={[{ value: "", label: "Auto: robert-brief.md, else all notes" }, ...r.notesList.map((f) => ({ value: f, label: f }))]}
+          />
           <button onClick={r.reloadGrounding} className={BTN} title="Reload notes and persona from the folder">
             Reload
           </button>
@@ -914,11 +947,12 @@ export default function Robert() {
             placeholder="your first name, plus how people mishear it: Alex, Alec"
             className={FIELD + " flex-1 min-w-[220px]"}
           />
-          <select value={r.callType} onChange={(e) => r.setCallType(e.target.value as any)} className={FIELD}>
-            <option value="auto">call type: auto</option>
-            <option value="one">1:1 call</option>
-            <option value="group">group call</option>
-          </select>
+          <SelectField
+            openKey="calltype" openPicker={openPicker} setOpenPicker={setOpenPicker} className={FIELD + " min-w-[130px]"}
+            value={r.callType}
+            onChange={(v) => r.setCallType(v as any)}
+            options={[{ value: "auto", label: "Call type: auto" }, { value: "one", label: "1:1 call" }, { value: "group", label: "group call" }]}
+          />
         </Section>
 
         <Section
