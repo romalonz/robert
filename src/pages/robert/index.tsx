@@ -378,9 +378,9 @@ export default function Robert() {
           max={r.voiceMax}
           initial={r.selectedVoices}
           title="Pick Robert's voice"
-          subtitle="Choose up to 3 characters whose speaking style shapes how Robert talks. This becomes your persona and is used in every answer."
-          onSave={(ids) => { r.applyVoices(ids); r.finishOnboarding(); }}
-          onClose={r.finishOnboarding}
+          subtitle="Choose up to 3 characters whose speaking style shapes how Robert talks. This becomes your voice and is used in every answer."
+          onSave={(ids) => { r.applyVoices(ids); r.finishOnboarding(); if (r.provider === "local") r.requestSetup("brain"); }}
+          onClose={() => { r.finishOnboarding(); if (r.provider === "local") r.requestSetup("brain"); }}
         />
       )}
       {/* Voice picker opened later from settings */}

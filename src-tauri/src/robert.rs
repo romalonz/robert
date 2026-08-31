@@ -1245,6 +1245,30 @@ pub fn robert_retrieve_notes(
     Ok(out.trim().to_string())
 }
 
+/// True if this machine is already set up (has a profile or any real knowledge
+/// file), so onboarding never runs on a configured machine — only on a fresh
+/// install with an empty notes folder.
+#[tauri::command]
+pub fn robert_is_configured(notes_folder: Option<String>) -> bool {
+    let Ok((_, base)) = resolve_notes_folder(notes_folder) else { return false };
+    if base.join("profile.md").is_file() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(&base) else { return false };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let low = name.to_lowercase();
+        if low.ends_with(".md")
+            && !name.starts_with('_')
+            && !low.eq("readme.md")
+            && (low.starts_with("robert-knowledge_") || low.starts_with("robert-brief"))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Read one top-level file from the notes folder (persona, a note). None when absent.
 #[tauri::command]
 pub fn robert_read_note(notes_folder: Option<String>, name: String) -> Result<Option<String>, String> {

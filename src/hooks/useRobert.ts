@@ -424,10 +424,10 @@ export const useRobert = () => {
   const [voicePickerOpen, setVoicePickerOpen] = useState(false);
   const selectedVoicesRef = useRef(selectedVoices);
   selectedVoicesRef.current = selectedVoices;
-  // First-run onboarding: résumé, then voice.
-  const [onboardingStep, setOnboardingStep] = useState<null | "resume" | "voice">(
-    () => (localStorage.getItem("robert.onboarded") === "1" ? null : "resume")
-  );
+  // First-run onboarding: résumé, then voice, then set up the local brain.
+  // Only ever runs on a FRESH install; a configured machine is detected and
+  // marked onboarded so it never appears again.
+  const [onboardingStep, setOnboardingStep] = useState<null | "resume" | "voice">(null);
   const [addressedTo, setAddressedTo] = useState<string>(""); // who the last line was for
   const [notes, setNotes] = useState<string>("");
   const [groundingSource, setGroundingSource] = useState<string>("");
@@ -1392,6 +1392,37 @@ export const useRobert = () => {
   useEffect(() => {
     reloadGrounding();
   }, [reloadGrounding]);
+
+  // Decide whether to onboard: never on a machine that is already set up.
+  useEffect(() => {
+    if (localStorage.getItem("robert.onboarded") === "1") return;
+    (async () => {
+      let configured = false;
+      try {
+        configured = await invoke<boolean>("robert_is_configured", {
+          notesFolder: notesFolderRef.current,
+        });
+      } catch {
+        configured = false;
+      }
+      // installed local model also counts as "already set up"
+      if (!configured) {
+        try {
+          const st = await invoke<{ has_model: boolean }>("robert_local_status", {
+            model: localModelRef.current || "gemma4:12b",
+          });
+          if (st?.has_model) configured = true;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (configured) {
+        localStorage.setItem("robert.onboarded", "1");
+      } else {
+        setOnboardingStep("resume");
+      }
+    })();
+  }, []);
 
   // ── Knowledge inbox ──────────────────────────────────────────────────────
   const refreshInbox = useCallback(async () => {
