@@ -304,7 +304,7 @@ Rules:
 
 // System prompt for the "Solve screen" vision feature: reads a screenshot of a
 // technical-interview task and returns a complete, correct answer.
-const SOLVE_SYSTEM = `You are shown a screenshot of a technical interview question or task. Silently decide which of the three formats below fits, then answer in ONLY that format. Your reply must begin with the characters "1." and contain nothing before it — no preamble, no heading, and never the words "type", "format", "conceptual", "design", or "algorithm".
+const SOLVE_SYSTEM = `You are shown a screenshot of a problem, question, task, or set of instructions — it does NOT have to be about coding. Silently decide which of the formats below fits, then answer in ONLY that format. Your reply must begin with the characters "1." and contain nothing before it — no preamble, no heading, and never the words "type", "format", "conceptual", "design", or "algorithm".
 
 CRITICAL: match the exact technology and language in the problem. If the stack is TypeScript / Next.js / React, answer in TypeScript, never Python. Never switch languages or invent APIs. For anything practical or design-related, favor real, existing, widely-used libraries/APIs/services and name them exactly for the stack shown rather than reinventing — the value is wiring them together correctly. (A pure algorithm puzzle is the exception: write it from scratch, do not just point to a library.)
 
@@ -330,7 +330,13 @@ FORMAT for SQL / spreadsheet / tool or CRM config:
 1. The answer — the exact query, formula, or steps for the tool shown.
 2. In plain words — one line on what it does.
 
-If the image is unreadable or not a task, reply with one short line saying so. Be correct and specific over generic.`;
+FORMAT for a TASK, PROCESS, or STEP-BY-STEP (anything that is "do this" or "how do I…" and is NOT code: setting something up, configuring a tool, following instructions, filling a form, fixing an error message, a workflow, a checklist, a how-to for any app or real-world procedure):
+1. What you need to do — one plain sentence saying the goal.
+2. Steps — a numbered list of the exact actions in order. Each step is one concrete thing to do; name the actual buttons, menus, fields, settings, or commands for the exact tool or screen shown. Be specific, not generic ("click Settings > Integrations > Add", not "go to settings").
+3. Watch out — 1 or 2 common mistakes or gotchas for this task (skip if none).
+4. If someone asks what you're doing, say this — one short spoken line in plain words.
+
+If the image is unreadable or has no question or task, reply with one short line saying so. Be correct and specific over generic.`;
 
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
