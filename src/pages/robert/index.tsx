@@ -3,6 +3,8 @@
 // Content-protected (off screen shares). Everything Robert needs lives here.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { useRobert, CLOUD_PROVIDERS } from "@/hooks/useRobert";
 
@@ -41,6 +43,50 @@ function rootOf(bundle: string): string {
 function labelOf(root: string): string {
   for (const [re, name] of KNOWN_APPS) if (re.test(root)) return name;
   return root.split(".").pop() || root;
+}
+
+/// Checks the operator's signed update feed on launch. If a newer version is
+/// published (and its signature verifies against the embedded public key), it
+/// offers a one-click install. Only the operator can produce a valid update.
+function UpdateBanner() {
+  const [upd, setUpd] = useState<Update | null>(null);
+  const [status, setStatus] = useState<"" | "downloading" | "installing" | "error">("");
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    checkUpdate()
+      .then((u) => { if (u) setUpd(u); })
+      .catch(() => {});
+  }, []);
+  if (!upd) return null;
+  const install = async () => {
+    try {
+      setStatus("downloading");
+      await upd.downloadAndInstall((e) => {
+        if (e.event === "Finished") setStatus("installing");
+      });
+      await relaunch();
+    } catch (e: any) {
+      setErr(String(e));
+      setStatus("error");
+    }
+  };
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 bg-emerald-950/40 border-b border-emerald-900/50 text-[12px]">
+      <span className="text-emerald-300">
+        {status === "downloading" ? "Downloading update…" : status === "installing" ? "Installing… Robert will restart." : status === "error" ? `Update failed: ${err}` : `Update available: v${upd.version}`}
+      </span>
+      {status === "" && (
+        <button onClick={install} className="ml-auto h-6 px-2.5 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500">
+          Install &amp; restart
+        </button>
+      )}
+      {status === "error" && (
+        <button onClick={install} className="ml-auto h-6 px-2.5 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500">
+          Retry
+        </button>
+      )}
+    </div>
+  );
 }
 
 type VoiceItem = { id: string; label: string; trait: string };
@@ -281,6 +327,7 @@ export default function Robert() {
       className="h-screen w-full overflow-y-auto bg-neutral-950/70 backdrop-blur-2xl text-neutral-100 select-text text-[13px]"
       style={{ ["--cursor-type" as any]: "default" }}
     >
+      <UpdateBanner />
       {/* Consent gate: no install/download happens until the user says Continue */}
       {r.pendingSetup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
