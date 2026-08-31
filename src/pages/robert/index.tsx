@@ -863,6 +863,12 @@ export default function Robert() {
             <input type="checkbox" checked={r.recordMeetings} onChange={(e) => r.setRecordMeetings(e.target.checked)} />
             record meetings (transcript + takeaways, local only)
           </label>
+          {r.telemetryOn && (
+            <label className="basis-full flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer" title="Anonymous usage and error events only — never transcripts, notes, meeting knowledge, names, or keys.">
+              <input type="checkbox" checked={r.telemetryOn} onChange={(e) => r.setTelemetry(e.target.checked)} />
+              share anonymous usage &amp; errors (no meeting content) — helps improve Robert
+            </label>
+          )}
         </Section>
 
         <Section

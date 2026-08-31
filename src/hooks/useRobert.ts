@@ -457,6 +457,10 @@ export const useRobert = () => {
   // tells at a glance whether transcription or the brain is the dead half.
   const [turnsHeard, setTurnsHeard] = useState(0);
   const [answersGiven, setAnswersGiven] = useState(0);
+  const turnsHeardRef = useRef(0);
+  const answersGivenRef = useRef(0);
+  turnsHeardRef.current = turnsHeard;
+  answersGivenRef.current = answersGiven;
   // One-shot brain/key check, surfaced inline in settings.
   const [brainTest, setBrainTest] = useState<{
     status: "idle" | "testing" | "ok" | "fail";
@@ -537,6 +541,23 @@ export const useRobert = () => {
         : "")
     );
   };
+  // Anonymous usage/error telemetry to the operator's webhook (privacy-safe:
+  // NEVER content — see src-tauri/src/telemetry.rs). Fire-and-forget.
+  const track = useCallback((event: string, props: Record<string, unknown> = {}) => {
+    invoke("robert_track", { event, props }).catch(() => {});
+  }, []);
+  const [telemetryOn, setTelemetryOn] = useState(false);
+  useEffect(() => {
+    invoke<boolean>("robert_telemetry_status").then(setTelemetryOn).catch(() => setTelemetryOn(false));
+  }, []);
+  const setTelemetry = useCallback((enabled: boolean) => {
+    invoke("robert_telemetry_set", { enabled })
+      .then(() => invoke<boolean>("robert_telemetry_status"))
+      .then(setTelemetryOn)
+      .catch(() => {});
+  }, []);
+  useEffect(() => { track("app_open", { provider: providerRef.current }); }, [track]);
+
   const reqIdRef = useRef(0);
   // id of the request whose answer currently owns the main display. Answers
   // display monotonically: a finished answer newer than what is shown takes
@@ -969,6 +990,7 @@ export const useRobert = () => {
       }
     } catch (e: any) {
       if (id === reqIdRef.current) setError(String(e));
+      track("error", { where: "suggest", msg: String(e).slice(0, 200) });
     } finally {
       if (id === reqIdRef.current) setSuggesting(false);
     }
@@ -1283,6 +1305,7 @@ export const useRobert = () => {
           silenceMs: 900,
         });
         setRunning(true);
+        track("meeting_start", { provider: providerRef.current, mode: modeRef.current });
         // Meeting Memory: open the transcript log for this session.
         meetingDirRef.current = "";
         if (recordMeetingsRef.current) {
@@ -1336,10 +1359,11 @@ export const useRobert = () => {
     }
     setRunning(false);
     setStatus("idle");
+    track("meeting_end", { turns: turnsHeardRef.current, answers: answersGivenRef.current });
     const dir = meetingDirRef.current;
     meetingDirRef.current = "";
     if (dir) finishMeeting(dir);
-  }, [finishMeeting]);
+  }, [finishMeeting, track]);
 
   // Track previous target so we can detect changes and auto-restart the engine.
   // Debounced so typing "brave" one letter at a time does not restart 5 times.
@@ -1736,8 +1760,10 @@ export const useRobert = () => {
         try {
           const out = await visionCall(b64);
           setScreenAnswer(out.trim());
+          track("solve_screen", { ok: true, provider: providerRef.current });
         } catch (err: any) {
           setScreenError(String(err));
+          track("error", { where: "solve_screen", msg: String(err).slice(0, 200) });
         } finally {
           setScreenSolving(false);
         }
@@ -1929,6 +1955,8 @@ export const useRobert = () => {
     declineSetup,
     diskFree,
     setupSizeBytes,
+    telemetryOn,
+    setTelemetry,
     modelsLocation,
     visionModel,
     setVisionModel,

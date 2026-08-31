@@ -6,6 +6,7 @@ mod db;
 mod knowledge;
 mod local_brain;
 mod robert;
+mod telemetry;
 #[cfg(target_os = "windows")]
 mod robert_win;
 mod shortcuts;
@@ -152,6 +153,9 @@ pub fn run() {
             robert::robert_write_note,
             robert::robert_read_note,
             robert::robert_is_configured,
+            telemetry::robert_track,
+            telemetry::robert_telemetry_status,
+            telemetry::robert_telemetry_set,
             robert::robert_note_path,
             robert::robert_set_height,
             knowledge::robert_list_inbox,
