@@ -1,0 +1,60 @@
+name: macos-build
+on:
+  push:
+    branches: [robert-main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest   # Apple Silicon (arm64), matches the committed engine
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Fetch the bundled STT model (byte-identical to the verified build)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download internal-assets -R romalonz/robert -p robert-macos-model.tgz -D /tmp
+          mkdir -p src-tauri/resources
+          tar -C src-tauri/resources -xzf /tmp/robert-macos-model.tgz
+          test -d src-tauri/resources/models/openai_whisper-base.en || { echo "model missing after extract"; exit 1; }
+
+      - name: Install frontend deps
+        run: npm install
+
+      - name: Build (signed) app + dmg
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ROBERT_CHANNEL: installer
+          ROBERT_TELEMETRY_URL: ${{ secrets.ROBERT_TELEMETRY_URL }}
+        run: npm run tauri build -- --bundles app,dmg --target aarch64-apple-darwin
+
+      - name: Package + publish to the release
+        if: ${{ github.ref == 'refs/heads/robert-main' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APP=$(find src-tauri/target -path '*/release/bundle/macos/Robert.app' -maxdepth 6 | head -1)
+          DMG=$(find src-tauri/target -path '*/release/bundle/dmg/*.dmg' -maxdepth 6 | head -1)
+          test -n "$APP" || { echo "no .app built"; exit 1; }
+          cat > README-macOS.txt <<'TXT'
+          ROBERT for macOS (Apple Silicon / M-series)
+          1. Unzip, drag Robert.app into Applications.
+          2. First open: right-click Robert.app > Open > Open (unsigned build; once only).
+          3. Grant mic/audio permission when asked. Local model is bundled; or use a cloud key.
+          Apple Silicon (M1/M2/M3/M4) only.
+          TXT
+          ditto -c -k --keepParent "$APP" Robert-macOS-AppleSilicon.zip
+          zip -q Robert-macOS-AppleSilicon.zip README-macOS.txt
+          gh release upload v0.1.1 Robert-macOS-AppleSilicon.zip -R romalonz/robert --clobber
+          if [ -n "$DMG" ]; then gh release upload v0.1.1 "$DMG" -R romalonz/robert --clobber || true; fi
+          echo "published macOS build"
