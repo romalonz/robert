@@ -355,7 +355,7 @@ export default function Robert() {
     if (!modalOpen) return;
     const screenH = window.screen?.availHeight ?? 900;
     const screenW = window.screen?.availWidth ?? 1200;
-    const w = Math.min(760, Math.round(screenW * 0.8));
+    const w = Math.min(820, Math.round(screenW * 0.82));
     const h = Math.min(700, Math.round(screenH * 0.82));
     invoke("robert_set_size", { width: w, height: h }).catch(() => {});
     // no cleanup: when the modal closes, modalOpen flips false and the content
@@ -371,7 +371,7 @@ export default function Robert() {
       const h = answerRef.current?.scrollHeight ?? 0;
       target = Math.max(150, Math.min(maxH, 44 + h + 18));
     }
-    invoke("robert_set_size", { width: 600, height: target }).catch(() => {});
+    invoke("robert_set_size", { width: 720, height: target }).catch(() => {});
   }, [
     modalOpen,
     r.suggestion,
