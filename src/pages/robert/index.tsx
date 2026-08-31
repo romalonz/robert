@@ -195,13 +195,12 @@ const BTN =
 function Section({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">
-      <span
-        className="w-[76px] shrink-0 h-7 flex items-center text-[10px] uppercase tracking-wide text-neutral-500 cursor-help select-none"
-        title={hint}
-      >
-        {title}
-        <span className="ml-1 text-neutral-700">ⓘ</span>
-      </span>
+      <Tip side="left" text={hint}>
+        <span className="w-[76px] shrink-0 h-7 flex items-center text-[10px] uppercase tracking-wide text-neutral-400 cursor-help select-none">
+          {title}
+          <span className="ml-1 text-neutral-600">ⓘ</span>
+        </span>
+      </Tip>
       <div className="flex-1 flex items-center gap-2 flex-wrap min-w-0">{children}</div>
     </div>
   );
@@ -210,9 +209,9 @@ function Section({ title, hint, children }: { title: string; hint: string; child
 type Opt = { value: string; label: string; hint?: string };
 /// A dropdown that opens as a clean, grown-window modal (like the voice picker)
 /// instead of a cramped native select. Single-select, searchable when long.
-function SelectField({ value, options, onChange, placeholder, openKey, openPicker, setOpenPicker, className }: {
+function SelectField({ value, options, onChange, placeholder, openKey, openPicker, setOpenPicker, className, tip }: {
   value: string; options: Opt[]; onChange: (v: string) => void; placeholder?: string;
-  openKey: string; openPicker: string | null; setOpenPicker: (k: string | null) => void; className?: string;
+  openKey: string; openPicker: string | null; setOpenPicker: (k: string | null) => void; className?: string; tip?: string;
 }) {
   const open = openPicker === openKey;
   const [q, setQ] = useState("");
@@ -220,7 +219,7 @@ function SelectField({ value, options, onChange, placeholder, openKey, openPicke
   const list = q.trim() ? options.filter((o) => (o.label + " " + (o.hint || "")).toLowerCase().includes(q.trim().toLowerCase())) : options;
   return (
     <>
-      <button type="button" onClick={() => setOpenPicker(open ? null : openKey)}
+      <button type="button" onClick={() => setOpenPicker(open ? null : openKey)} title={tip}
         className={(className || FIELD) + " flex items-center justify-between gap-2 text-left"}>
         <span className="truncate">{cur ? cur.label : (placeholder || "Select…")}</span>
         <span className="opacity-50 shrink-0 text-[10px]">▾</span>
@@ -751,6 +750,7 @@ export default function Robert() {
         >
           <SelectField
             openKey="listen" openPicker={openPicker} setOpenPicker={setOpenPicker}
+            tip="Which app's audio Robert listens to. Pick your meeting app (Teams, Zoom, a browser tab). It hears everything that app plays."
             className={FIELD + " flex-1 min-w-[180px]"}
             value={targetInList ? r.target : "__current"}
             onChange={(v) => { if (v !== "__current") r.setTarget(v); }}
@@ -775,6 +775,7 @@ export default function Robert() {
         >
           <SelectField
             openKey="brain" openPicker={openPicker} setOpenPicker={setOpenPicker}
+            tip="Which AI generates the answers. Local runs on this machine (no key, private). The others need your own API key."
             className={FIELD + " min-w-[170px]"}
             value={r.provider}
             onChange={(v) => r.setProvider(v as any)}
@@ -914,6 +915,7 @@ export default function Robert() {
           />
           <SelectField
             openKey="knowledge" openPicker={openPicker} setOpenPicker={setOpenPicker}
+            tip="The notes file Robert grounds this meeting on. Auto uses robert-brief.md if present, else all your notes. Pick one file to focus on it."
             className={FIELD + " flex-1 min-w-[200px]"}
             value={r.notesList.includes(r.notesFile) ? r.notesFile : ""}
             onChange={(v) => r.setNotesFile(v)}
@@ -987,6 +989,7 @@ export default function Robert() {
           />
           <SelectField
             openKey="calltype" openPicker={openPicker} setOpenPicker={setOpenPicker} className={FIELD + " min-w-[130px]"}
+            tip="1:1 or group call. Auto switches to group once two colleagues are named, so Robert knows when a question is yours vs a teammate's."
             value={r.callType}
             onChange={(v) => r.setCallType(v as any)}
             options={[{ value: "auto", label: "Call type: auto" }, { value: "one", label: "1:1 call" }, { value: "group", label: "group call" }]}
