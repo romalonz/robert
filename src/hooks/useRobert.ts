@@ -304,15 +304,21 @@ Rules:
 
 // System prompt for the "Solve screen" vision feature: reads a screenshot of a
 // technical-interview task and returns a complete, correct answer.
-const SOLVE_SYSTEM = `You are shown a screenshot from a technical interview or a live technical task. It may be a coding problem, a SQL query task, a system-design prompt, a spreadsheet/formula task, or a tool/CRM configuration task. Read EVERYTHING visible in the image, including any examples, constraints, and starter code.
+const SOLVE_SYSTEM = `You are shown a screenshot from a technical interview or a live technical task (a coding problem, SQL, system design, a spreadsheet/formula, or a tool/CRM config). Read EVERYTHING in the image: the prompt, examples, constraints, and any starter code.
 
-Respond in this order, plain text (use a fenced code block for any code or SQL):
-1. One line: what is being asked.
-2. Approach: 2 to 4 short steps in plain words.
-3. Solution: the complete, correct, runnable answer. For a coding problem, full code in the language shown (or Python if none is shown). For SQL, the exact query. For system design or config, a concrete, specific design or the exact steps.
-4. Complexity: time and space, only if it is an algorithm.
+The person reading your answer is NOT a programmer. Write so a total beginner can understand it, read it out, and defend it if asked. TONE RULES: no jargon; if a technical word is unavoidable, define it in 3 words in parentheses (e.g. "hash map (instant lookup table)"); keep every line short enough to say out loud (about two sentences max); friendly, confident, first person.
 
-Be correct and complete over clever. If the image is unreadable or not a task, say so in one line.`;
+Respond in EXACTLY these numbered sections, in this order (use a fenced code block only for section 3):
+
+1. What it's asking — one plain sentence, like explaining to a friend, no code words.
+2. The idea — the core trick in one line, plus one everyday analogy on the next line (e.g. a hash map is like a coat check: hand over a ticket, get the coat instantly).
+3. The code — the shortest correct, copy-paste-ready solution, in the language shown (or Python). For SQL give the exact query; for design/config give the concrete steps.
+4. The code in plain English — one short bullet per line or block, each starting "In plain words, this line…", saying what it DOES, not the syntax.
+5. Walk-through — trace the code on the example from the screenshot (or a simple one), showing the values change step by step, ending at the answer.
+6. If they ask you to explain it, say this — a 2 to 3 sentence spoken script: the goal, the obvious slow way and why it's slow, then the better idea and the key insight. Natural, uses "we", mentions one trade-off.
+7. Speed, in plain words — one line, no math: e.g. "we look at each item once, so it grows in step with the list", and why that can't be beaten. Only for algorithms.
+
+If it is not a coding algorithm (SQL, config, design), keep sections 1 to 6 that apply and drop 7. If the image is unreadable or not a task, say so in one line.`;
 
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
@@ -1726,7 +1732,7 @@ export const useRobert = () => {
         system: SOLVE_SYSTEM,
         user: "Solve the task in this screenshot.",
         imageBase64: imageB64,
-        maxTokens: 900,
+        maxTokens: 1500,
       });
     }
     const meta = CLOUD_PROVIDERS.find((p) => p.id === prov);
@@ -1736,7 +1742,7 @@ export const useRobert = () => {
     if (prov === "anthropic") {
       return await invoke<string>("robert_vision_anthropic", {
         apiKey: key, model: mdl || "claude-opus-5", system: SOLVE_SYSTEM,
-        user: "Solve the task in this screenshot.", imageBase64: imageB64, maxTokens: 900,
+        user: "Solve the task in this screenshot.", imageBase64: imageB64, maxTokens: 1500,
       });
     }
     const baseUrl = prov === "custom" ? customBaseUrlRef.current.trim() : meta?.baseUrl || "";
