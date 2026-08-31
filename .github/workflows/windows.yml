@@ -57,7 +57,7 @@ jobs:
           if (-not (Test-Path $sigPath)) { Write-Host "no .sig (signing secret not set?) — skipping update feed"; exit 0 }
           $sig = Get-Content $sigPath -Raw
           $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          $url = "https://github.com/romalonz/robert-app/releases/download/v0.1.1/$($exe.Name)"
+          $url = "https://github.com/romalonz/robert/releases/download/v0.1.1/$($exe.Name)"
           $feed = [ordered]@{
             version   = $ver
             notes     = "Robert update"
@@ -65,7 +65,7 @@ jobs:
             platforms = [ordered]@{ "windows-x86_64" = [ordered]@{ signature = $sig.Trim(); url = $url } }
           }
           $feed | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 latest.json
-          gh release upload v0.1.1 $exe.FullName $sigPath latest.json --clobber -R romalonz/robert-app
+          gh release upload v0.1.1 $exe.FullName $sigPath latest.json --clobber -R romalonz/robert
           if ($LASTEXITCODE -ne 0) { Write-Host "update-feed upload failed (non-fatal); artifact still built"; exit 0 }
           Write-Host "published latest.json for v$ver"
 
