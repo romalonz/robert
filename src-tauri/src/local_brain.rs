@@ -151,6 +151,71 @@ fn ollama_binary() -> Option<PathBuf> {
     None
 }
 
+/// The Robert data folder where large model files are kept together, so a
+/// fresh setup does not scatter ~13 GB across the disk. Created on demand.
+pub fn robert_models_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let root = std::env::var("LOCALAPPDATA").ok().map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let root = std::env::var("HOME").ok().map(|h| PathBuf::from(h).join("Library/Application Support"));
+    #[cfg(target_os = "linux")]
+    let root = std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".local/share"));
+    let dir = root?.join("Robert").join("models");
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir)
+}
+
+/// True if the user already has an Ollama model store with content, so we must
+/// NOT redirect OLLAMA_MODELS and hijack their existing models.
+fn existing_models_present() -> bool {
+    // an explicit user setting wins: respect it
+    if std::env::var("OLLAMA_MODELS").is_ok() {
+        return true;
+    }
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
+    if home.is_empty() {
+        return true; // unknown; be safe and do not touch
+    }
+    let manifests = PathBuf::from(&home).join(".ollama").join("models").join("manifests");
+    std::fs::read_dir(&manifests).map(|mut d| d.next().is_some()).unwrap_or(false)
+}
+
+/// On a FRESH setup, keep models in the Robert folder: set OLLAMA_MODELS for
+/// this process (so the server/tray app we spawn inherits it) and persist it
+/// (Windows setx / macOS launchctl) so it survives restarts. No-op if the user
+/// already has models or set OLLAMA_MODELS themselves.
+fn route_models_to_robert_folder() {
+    if existing_models_present() {
+        return;
+    }
+    let Some(dir) = robert_models_dir() else { return };
+    let path = dir.to_string_lossy().to_string();
+    std::env::set_var("OLLAMA_MODELS", &path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("setx")
+            .args(["OLLAMA_MODELS", &path])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("launchctl").args(["setenv", "OLLAMA_MODELS", &path]).status();
+    }
+}
+
+/// Where Robert keeps the models (for the UI). Empty if it is using the
+/// system default (existing Ollama install).
+#[tauri::command]
+pub fn robert_models_location() -> String {
+    if existing_models_present() {
+        return String::new();
+    }
+    robert_models_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()
+}
+
 async fn list_models() -> Option<Vec<String>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
@@ -403,6 +468,7 @@ async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalStatus, String> {
     CANCEL.store(false, Ordering::Relaxed);
+    route_models_to_robert_folder();
     let result: Result<(), String> = async {
         if list_models().await.is_none() {
             if ollama_binary().is_none() {

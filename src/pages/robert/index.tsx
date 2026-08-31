@@ -199,6 +199,39 @@ export default function Robert() {
       className="h-screen w-full overflow-y-auto bg-neutral-950/70 backdrop-blur-2xl text-neutral-100 select-text text-[13px]"
       style={{ ["--cursor-type" as any]: "default" }}
     >
+      {/* Consent gate: no install/download happens until the user says Continue */}
+      {r.pendingSetup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="w-full max-w-[420px] rounded-lg border border-neutral-700 bg-neutral-900 p-4 shadow-xl">
+            <div className="text-sm font-semibold mb-1">
+              {r.pendingSetup === "vision" ? "Download the vision model?" : "Set up the local AI brain?"}
+            </div>
+            <p className="text-[12px] leading-6 text-neutral-400">
+              {r.pendingSetup === "vision"
+                ? "Robert will download a vision model (about 6 GB) so Solve screen works offline. It is saved in your Robert folder. This can take a few minutes."
+                : "Robert will install Ollama if needed and download the local model (about 7.5 GB). Everything is saved in your Robert folder and runs on this machine. This can take several minutes."}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-2">
+              Nothing is downloaded until you choose Continue. You can also cancel and use a cloud brain with your own key instead.
+            </p>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={r.declineSetup}
+                className="h-7 px-3 text-[11px] font-medium rounded-md border border-neutral-700 hover:bg-neutral-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={r.confirmSetup}
+                className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Draggable top bar + primary controls */}
       <div className="sticky top-0 z-10 flex items-center gap-2 px-3 h-9 bg-neutral-950/50 backdrop-blur-xl border-b border-neutral-800/50">
         <span data-tauri-drag-region className="font-semibold text-sm select-none">
@@ -225,12 +258,12 @@ export default function Robert() {
         )}
         {/* the big empty area drags the window across both screens */}
         <div data-tauri-drag-region className="flex-1 self-stretch" />
-        <div className="flex items-center gap-0.5 bg-neutral-900/50 rounded p-0.5">
+        <div className="flex items-center h-7 bg-neutral-900/60 border border-neutral-700 rounded-md p-0.5">
           {(["auto", "listening"] as const).map((m) => (
             <button
               key={m}
               onClick={() => r.setMode(m)}
-              className={`px-2 py-0.5 text-[11px] rounded ${
+              className={`h-6 px-3 text-[11px] font-medium rounded transition-colors ${
                 r.mode === m
                   ? "bg-neutral-700 text-white"
                   : "text-neutral-400 hover:text-neutral-200"
@@ -248,14 +281,14 @@ export default function Robert() {
         <button
           onClick={r.solveScreen}
           disabled={r.screenSolving}
-          className="px-2.5 py-1 text-[11px] rounded border border-neutral-600 hover:bg-neutral-800 font-medium disabled:opacity-50"
+          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
           title="Snip a coding or technical problem on your screen and get a full solution (uses the selected brain's vision model)"
         >
           {r.screenSolving ? "Solving…" : "Solve screen"}
         </button>
         <button
           onClick={r.respondNow}
-          className="px-3 py-1 text-[11px] rounded bg-sky-600 hover:bg-sky-500 font-medium"
+          className="h-7 px-3 text-[11px] font-medium rounded-md bg-sky-600 hover:bg-sky-500"
           title="Answer the last thing said, right now"
         >
           Respond
@@ -263,14 +296,14 @@ export default function Robert() {
         {r.running ? (
           <button
             onClick={r.stop}
-            className="px-3 py-1 text-[11px] rounded bg-red-600 hover:bg-red-500 font-medium"
+            className="h-7 px-3 text-[11px] font-medium rounded-md bg-red-600 hover:bg-red-500"
           >
             Stop
           </button>
         ) : (
           <button
             onClick={() => r.start()}
-            className="px-3 py-1 text-[11px] rounded bg-emerald-600 hover:bg-emerald-500 font-medium"
+            className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500"
           >
             Start
           </button>
@@ -477,7 +510,7 @@ export default function Robert() {
                       Cancel
                     </button>
                   ) : (
-                    <button onClick={r.setupLocalBrain} className={BTN} title="Installs Ollama if needed and downloads the model (7.5 GB for gemma4:12b, 3 GB for gemma4:e4b)">
+                    <button onClick={() => r.requestSetup("brain")} className={BTN} title="Installs Ollama if needed and downloads the model (7.5 GB for gemma4:12b, 3 GB for gemma4:e4b)">
                       Set up
                     </button>
                   )}
@@ -492,10 +525,15 @@ export default function Robert() {
                   title="A vision-capable Ollama model for Solve screen (reads a screenshot of a coding/technical problem). qwen2.5vl:7b ~6 GB."
                   className={FIELD + " w-[150px]"}
                 />
-                <button onClick={r.setupVisionModel} className={BTN} title="Download the vision model (about 6 GB for qwen2.5vl:7b)">
+                <button onClick={() => r.requestSetup("vision")} className={BTN} title="Download the vision model (about 6 GB for qwen2.5vl:7b)">
                   Set up vision
                 </button>
               </span>
+              {r.modelsLocation && (
+                <span className="basis-full text-[10px] text-neutral-600 truncate" title={r.modelsLocation}>
+                  Models stored in your Robert folder: {r.modelsLocation}
+                </span>
+              )}
             </>
           ) : (
             <>

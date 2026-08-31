@@ -164,6 +164,7 @@ pub fn run() {
             local_brain::robert_setup_local,
             local_brain::robert_local_cancel,
             local_brain::robert_local_recommend,
+            local_brain::robert_models_location,
         ])
         .setup(|app| {
             // Setup main window positioning

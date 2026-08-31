@@ -381,6 +381,10 @@ export const useRobert = () => {
     completed: number;
     total: number;
   } | null>(null);
+  // Consent gate: nothing is installed/downloaded until the user says Continue.
+  const [setupConsent, setSetupConsent] = useState<boolean>(false);
+  const [pendingSetup, setPendingSetup] = useState<null | "brain" | "vision">(null);
+  const [modelsLocation, setModelsLocation] = useState<string>("");
   const [addressedTo, setAddressedTo] = useState<string>(""); // who the last line was for
   const [notes, setNotes] = useState<string>("");
   const [groundingSource, setGroundingSource] = useState<string>("");
@@ -448,6 +452,11 @@ export const useRobert = () => {
   const rosterRef = useRef<string[]>([]); // colleague names heard this call
   const visionModelRef = useRef(visionModel);
   visionModelRef.current = visionModel;
+  const setupConsentRef = useRef(setupConsent);
+  setupConsentRef.current = setupConsent;
+  const pendingSetupRef = useRef(pendingSetup);
+  pendingSetupRef.current = pendingSetup;
+  const requestSetupRef = useRef<((k: "brain" | "vision") => void) | null>(null);
   const convCtx = (): ConvContext => ({
     aliases: parseAliases(myNameRef.current),
     roster: rosterRef.current,
@@ -1581,8 +1590,8 @@ export const useRobert = () => {
     if (provider !== "local" || !localStatus || autoSetupTried.current) return;
     if (localStatus.running && localStatus.has_model) return;
     autoSetupTried.current = true;
-    setupLocalBrain();
-  }, [provider, localStatus, setupLocalBrain]);
+    requestSetupRef.current?.("brain");
+  }, [provider, localStatus]);
 
   // ── Solve screen: capture a region and send it to a vision model ──────────
   const visionCall = useCallback(async (imageB64: string): Promise<string> => {
@@ -1651,6 +1660,45 @@ export const useRobert = () => {
       setLocalSetup({ stage: "error", status: String(e), completed: 0, total: 0 });
     }
   }, []);
+
+  // Consent-gated entry points: the top-bar/settings buttons and the auto-setup
+  // effect call these; the actual install/download runs only after Continue.
+  const requestSetup = useCallback((kind: "brain" | "vision") => {
+    if (setupConsentRef.current) {
+      if (kind === "brain") setupLocalBrain();
+      else setupVisionModel();
+      return;
+    }
+    setPendingSetup(kind);
+  }, [setupLocalBrain, setupVisionModel]);
+  requestSetupRef.current = requestSetup;
+
+  const confirmSetup = useCallback(() => {
+    setSetupConsent(true);
+    setupConsentRef.current = true;
+    const k = pendingSetupRef.current;
+    setPendingSetup(null);
+    if (k === "vision") setupVisionModel();
+    else setupLocalBrain();
+  }, [setupLocalBrain, setupVisionModel]);
+
+  const declineSetup = useCallback(() => {
+    const k = pendingSetupRef.current;
+    setPendingSetup(null);
+    setLocalSetup({
+      stage: "error",
+      status:
+        k === "vision"
+          ? "Vision setup cancelled. Solve screen needs a vision model or a cloud key."
+          : "Setup cancelled. The local brain was not installed; pick a cloud brain or try again.",
+      completed: 0,
+      total: 0,
+    });
+  }, []);
+
+  useEffect(() => {
+    invoke<string>("robert_models_location").then(setModelsLocation).catch(() => setModelsLocation(""));
+  }, [localStatus]);
 
   // Re-ground when the notes folder changes (debounced while typing a path)
   // or when a different note file is selected (immediate).
@@ -1740,6 +1788,11 @@ export const useRobert = () => {
     localSetup,
     refreshLocalStatus,
     setupLocalBrain,
+    requestSetup,
+    pendingSetup,
+    confirmSetup,
+    declineSetup,
+    modelsLocation,
     visionModel,
     setVisionModel,
     screenAnswer,
