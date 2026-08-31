@@ -18,7 +18,7 @@ never leaves your control.
 1. Bump the version in `src-tauri/tauri.conf.json` (and Cargo.toml) — e.g. 0.1.9 -> 0.2.0.
 2. Push to `robert-main`. CI builds, SIGNS the installer, and uploads
    `latest.json` + the signed installer to the `v0.1.1` GitHub release.
-3. Every running Robert checks `https://github.com/romalonzo/robert-app/releases/latest/download/latest.json`
+3. Every running Robert checks `https://github.com/romalonz/robert-app/releases/latest/download/latest.json`
    on launch, sees the higher version, verifies the signature with the embedded
    public key, and offers "Install & restart" (the green banner).
 
