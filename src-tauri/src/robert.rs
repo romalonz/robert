@@ -1335,6 +1335,13 @@ mod retrieval_tests {
 
 /// Resize the Robert window's height to fit its content, preserving width.
 #[tauri::command]
+pub fn robert_set_size(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn robert_set_height(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let cur = window.inner_size().map_err(|e| e.to_string())?;

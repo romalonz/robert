@@ -158,6 +158,7 @@ pub fn run() {
             telemetry::robert_telemetry_set,
             robert::robert_note_path,
             robert::robert_set_height,
+            robert::robert_set_size,
             knowledge::robert_list_inbox,
             knowledge::robert_import_file,
             knowledge::robert_import_bytes,

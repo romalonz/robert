@@ -114,7 +114,7 @@ function VoicePicker({
     setSel((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= max ? cur : [...cur, id]));
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="w-full max-w-[560px] h-[70vh] flex flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
+      <div className="w-full max-w-[620px] h-[82vh] flex flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
         <div className="px-4 pt-3 pb-2 border-b border-neutral-800">
           <div className="text-sm font-semibold">{title}</div>
           <div className="text-[11px] text-neutral-500 mt-0.5">{subtitle}</div>
@@ -301,7 +301,25 @@ export default function Robert() {
   // Flexible: expands for stacked answers or a long Respond, retracts to a
   // slim bar when there's little to show. Capped to ~70% of the screen.
   const answerRef = useRef<HTMLDivElement>(null);
+  // A modal (voice picker, onboarding, consent) needs real room; the window is
+  // otherwise a short bar and a viewport-sized modal renders tiny.
+  const modalOpen =
+    !!r.pendingSetup || r.voicePickerOpen || r.onboardingStep !== null;
   useEffect(() => {
+    if (!modalOpen) return;
+    const screenH = window.screen?.availHeight ?? 900;
+    const screenW = window.screen?.availWidth ?? 1200;
+    const w = Math.min(760, Math.round(screenW * 0.8));
+    const h = Math.min(700, Math.round(screenH * 0.82));
+    invoke("robert_set_size", { width: w, height: h }).catch(() => {});
+    return () => {
+      // on close, return to the slim default width; the content effect then
+      // recomputes the right height for what is on screen.
+      invoke("robert_set_size", { width: 600, height: 200 }).catch(() => {});
+    };
+  }, [modalOpen]);
+  useEffect(() => {
+    if (modalOpen) return; // don't shrink the window out from under a modal
     let target: number;
     const maxH = Math.round((window.screen?.availHeight ?? 1000) * 0.7);
     if (!r.running && !r.suggestion) {
@@ -312,6 +330,7 @@ export default function Robert() {
     }
     invoke("robert_set_height", { height: target }).catch(() => {});
   }, [
+    modalOpen,
     r.suggestion,
     r.answers,
     r.partial,
