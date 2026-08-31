@@ -374,11 +374,16 @@ export default function Robert() {
     // no cleanup: when the modal closes, modalOpen flips false and the content
     // effect below restores the default width + the right height in one step.
   }, [modalOpen]);
+  const solveActive = r.screenSolving || !!r.screenAnswer || !!r.screenError;
   useEffect(() => {
     if (modalOpen) return; // don't shrink the window out from under a modal
+    const screenH = window.screen?.availHeight ?? 1000;
+    const maxH = Math.round(screenH * 0.7);
     let target: number;
-    const maxH = Math.round((window.screen?.availHeight ?? 1000) * 0.7);
-    if (!r.running && !r.suggestion) {
+    if (solveActive) {
+      // the Solve result + how-to panel sits below the answer; make room for it
+      target = Math.min(Math.round(screenH * 0.82), 660);
+    } else if (!r.running && !r.suggestion) {
       target = 460;
     } else {
       const h = answerRef.current?.scrollHeight ?? 0;
@@ -387,6 +392,7 @@ export default function Robert() {
     invoke("robert_set_size", { width: 720, height: target }).catch(() => {});
   }, [
     modalOpen,
+    solveActive,
     r.suggestion,
     r.answers,
     r.partial,
