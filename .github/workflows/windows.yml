@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -61,6 +63,8 @@ jobs:
           }
           $feed | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 latest.json
           gh release upload v0.1.1 $exe.FullName $sigPath latest.json --clobber -R romalonzo/robert-app
+          if ($LASTEXITCODE -ne 0) { Write-Host "update-feed upload failed (non-fatal); artifact still built"; exit 0 }
+          Write-Host "published latest.json for v$ver"
 
   # Proves the done-for-you local-brain path on real Windows: the exact
   # download URL, silent installer flags, install location, and that the
