@@ -206,6 +206,17 @@ fn route_models_to_robert_folder() {
     }
 }
 
+/// Free disk space (bytes) where Robert stores its models, so onboarding can
+/// warn before a multi-GB download fails halfway.
+#[tauri::command]
+pub fn robert_disk_free() -> u64 {
+    let path = robert_models_dir()
+        .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
+        .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    fs4::available_space(&path).unwrap_or(0)
+}
+
 /// Where Robert keeps the models (for the UI). Empty if it is using the
 /// system default (existing Ollama install).
 #[tauri::command]

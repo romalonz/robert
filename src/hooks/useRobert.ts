@@ -19,6 +19,7 @@ import {
 } from "@/lib/conversation";
 import { parseAliases } from "@/lib/group";
 import { extractAnswerFormat, capToFormat, normalizeBullets, capFor, isNarrativeQuestion } from "@/lib/format";
+import { VOICES, VOICE_MAX } from "@/lib/voices";
 
 // Conversation type, which tunes how eagerly Robert speaks.
 export type RobertMode = "auto" | "interview" | "discussion" | "listening";
@@ -159,6 +160,34 @@ The Verdict and Why are for my eyes only. The Ask is the only part I will say.
 - Take the point seriously without a canned opener. ("Yeah, that one worries me too. Here's where it stands.")
 - Lower the temperature. Redirect to shared goal.
 - Never argue. Probe with a question instead.`;
+
+// The persona has two parts. The RULES are FIXED and owned by the app (they
+// always apply and stay current across updates). Only the VOICE is
+// interchangeable — the user composes it from characters (see @/lib/voices),
+// and it lives in _persona.md so it can also be hand-tuned.
+const VOICE_SECTION_RE = /## Voice \(composite[\s\S]*?(?=\n## )/;
+const _vm = DEFAULT_GROUNDING.match(VOICE_SECTION_RE);
+export const DEFAULT_VOICE = (_vm ? _vm[0] : "## Voice (composite, applied to fit the moment)\n- Balanced: calm, sharp, consultative; no fluff, no hedging.\n- Style: tight and precise, consultative, structured. No fluff. No hedging.").trim();
+// FIXED rules = the default grounding with the voice section removed.
+export const DEFAULT_RULES = DEFAULT_GROUNDING.replace(VOICE_SECTION_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+
+/// Build the "## Voice" section from selected character ids.
+function composeVoiceText(ids: string[]): string {
+  const chosen = VOICES.filter((v) => ids.includes(v.id));
+  const lines = chosen.length
+    ? chosen.map((v) => `- ${v.label.split(" - ").pop()}: ${v.trait}`).join("\n")
+    : "- Balanced: calm, sharp, consultative; no fluff, no hedging.";
+  return `## Voice (composite, applied to fit the moment)\n${lines}\n- Style: tight and precise, consultative, structured. No fluff. No hedging.`;
+}
+
+/// Pull just the "## Voice" block out of whatever is in _persona.md (handles a
+/// legacy full-persona file by extracting only its voice section).
+function extractVoice(text: string): string | null {
+  const m = text.match(/## Voice[\s\S]*?(?=\n## |$)/);
+  if (m) return m[0].trim();
+  const t = text.trim();
+  return t.startsWith("## Voice") ? t : null;
+}
 
 // The meeting-specific knowledge is NEVER part of the persona: it is loaded
 // from the notes folder at runtime and appended under this header when the
@@ -344,7 +373,9 @@ export const useRobert = () => {
   // Seeded with the default on first run; edited with any editor; app updates
   // to the default still apply while the file is untouched ("personaBase"
   // records the default that was current when the file was written).
-  const [persona, setPersona] = useState<string>(DEFAULT_GROUNDING);
+  // `persona` here holds the VOICE text (the swappable part). The rules are
+  // fixed in DEFAULT_RULES and always applied.
+  const [persona, setPersona] = useState<string>(DEFAULT_VOICE);
   const [personaCustomized, setPersonaCustomized] = useState<boolean>(false);
   const PERSONA_FILE = "_persona.md";
   // Group calls: my name (plus how people mispronounce it) and the call type.
@@ -384,7 +415,19 @@ export const useRobert = () => {
   // Consent gate: nothing is installed/downloaded until the user says Continue.
   const [setupConsent, setSetupConsent] = useState<boolean>(false);
   const [pendingSetup, setPendingSetup] = useState<null | "brain" | "vision">(null);
+  const [diskFree, setDiskFree] = useState<number | null>(null);
   const [modelsLocation, setModelsLocation] = useState<string>("");
+  // Persona voice: anime characters composed into _persona.md's Voice section.
+  const [selectedVoices, setSelectedVoices] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("robert.voices") || "[]"); } catch { return []; }
+  });
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+  const selectedVoicesRef = useRef(selectedVoices);
+  selectedVoicesRef.current = selectedVoices;
+  // First-run onboarding: résumé, then voice.
+  const [onboardingStep, setOnboardingStep] = useState<null | "resume" | "voice">(
+    () => (localStorage.getItem("robert.onboarded") === "1" ? null : "resume")
+  );
   const [addressedTo, setAddressedTo] = useState<string>(""); // who the last line was for
   const [notes, setNotes] = useState<string>("");
   const [groundingSource, setGroundingSource] = useState<string>("");
@@ -452,6 +495,9 @@ export const useRobert = () => {
   const rosterRef = useRef<string[]>([]); // colleague names heard this call
   const visionModelRef = useRef(visionModel);
   visionModelRef.current = visionModel;
+  const localStatusRef = useRef(localStatus);
+  localStatusRef.current = localStatus;
+  const diskFreeRef = useRef<number | null>(null);
   const setupConsentRef = useRef(setupConsent);
   setupConsentRef.current = setupConsent;
   const pendingSetupRef = useRef(pendingSetup);
@@ -484,7 +530,7 @@ export const useRobert = () => {
   const composeGrounding = () => {
     const fmt = answerFormat();
     return (
-      personaRef.current +
+      DEFAULT_RULES + "\n\n" + personaRef.current +
       (notesRef.current ? NOTES_HEADER + notesRef.current : "") +
       (fmt
         ? `\n\n## ANSWER FORMAT (set by my meeting knowledge file; overrides every rule above about sentence count, length, and bullet points)\n${fmt.text}\n`
@@ -540,44 +586,45 @@ export const useRobert = () => {
   /// Load _persona.md (create it from the default when missing; refresh it
   /// when it still equals an older default).
   const loadPersona = useCallback(async () => {
+    const composedFromPicks = composeVoiceText(selectedVoicesRef.current);
     try {
       const content = await invoke<string | null>("robert_read_note", {
         notesFolder: notesFolderRef.current,
         name: PERSONA_FILE,
       });
-      const base = localStorage.getItem("robert.personaBase");
-      const untouched = content === null || content.trim() === (base || "").trim();
-      if (untouched) {
-        if (content?.trim() !== DEFAULT_GROUNDING.trim()) {
+      let voice: string;
+      if (content && content.trim()) {
+        voice = extractVoice(content) || composedFromPicks;
+        // migrate a legacy full-persona file down to voice-only
+        if (content.trim() !== voice) {
           await invoke("robert_write_note", {
-            notesFolder: notesFolderRef.current,
-            name: PERSONA_FILE,
-            content: DEFAULT_GROUNDING + "\n",
+            notesFolder: notesFolderRef.current, name: PERSONA_FILE, content: voice + "\n",
           });
         }
-        localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
-        setPersona(DEFAULT_GROUNDING);
-        personaRef.current = DEFAULT_GROUNDING;
-        setPersonaCustomized(false);
       } else {
-        const c = content.trim();
-        setPersona(c);
-        personaRef.current = c;
-        setPersonaCustomized(true);
+        voice = selectedVoicesRef.current.length ? composedFromPicks : DEFAULT_VOICE;
+        await invoke("robert_write_note", {
+          notesFolder: notesFolderRef.current, name: PERSONA_FILE, content: voice + "\n",
+        });
       }
+      setPersona(voice);
+      personaRef.current = voice;
+      // "custom" = hand-edited away from both the default and the current picks
+      setPersonaCustomized(voice.trim() !== DEFAULT_VOICE.trim() && voice.trim() !== composedFromPicks.trim());
     } catch {
-      setPersona(DEFAULT_GROUNDING);
-      personaRef.current = DEFAULT_GROUNDING;
+      setPersona(DEFAULT_VOICE);
+      personaRef.current = DEFAULT_VOICE;
     }
   }, []);
 
+  // Reset the VOICE to Robert's default and clear the character picks.
   const resetPersona = useCallback(async () => {
+    setSelectedVoices([]);
     await invoke("robert_write_note", {
       notesFolder: notesFolderRef.current,
       name: PERSONA_FILE,
-      content: DEFAULT_GROUNDING + "\n",
+      content: DEFAULT_VOICE + "\n",
     });
-    localStorage.setItem("robert.personaBase", DEFAULT_GROUNDING);
     await loadPersona();
   }, [loadPersona]);
 
@@ -588,10 +635,32 @@ export const useRobert = () => {
     });
     await invoke("robert_open_path", { path: p });
   }, []);
+
+  // Compose the picked characters into _persona.md's "## Voice" section, leaving
+  // the rest of the persona intact. The voice is then part of every answer.
+  const applyVoices = useCallback(async (ids: string[]) => {
+    setSelectedVoices(ids);
+    selectedVoicesRef.current = ids;
+    try {
+      // the voice file IS just the composed voice section (rules stay fixed in the app)
+      await invoke("robert_write_note", {
+        notesFolder: notesFolderRef.current, name: PERSONA_FILE, content: composeVoiceText(ids) + "\n",
+      });
+      await loadPersona();
+    } catch (e: any) {
+      setError(String(e));
+    }
+  }, [loadPersona]);
+
+  const finishOnboarding = useCallback(() => {
+    localStorage.setItem("robert.onboarded", "1");
+    setOnboardingStep(null);
+  }, []);
   useEffect(() => localStorage.setItem("robert.myName", myName), [myName]);
 
   useEffect(() => localStorage.setItem("robert.callType", callType), [callType]);
   useEffect(() => localStorage.setItem("robert.visionModel", visionModel), [visionModel]);
+  useEffect(() => localStorage.setItem("robert.voices", JSON.stringify(selectedVoices)), [selectedVoices]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
 
@@ -1669,18 +1738,44 @@ export const useRobert = () => {
       else setupVisionModel();
       return;
     }
+    setDiskFree(null);
+    diskFreeRef.current = null;
+    invoke<number>("robert_disk_free").then((b) => { setDiskFree(b); diskFreeRef.current = b; }).catch(() => setDiskFree(null));
     setPendingSetup(kind);
   }, [setupLocalBrain, setupVisionModel]);
   requestSetupRef.current = requestSetup;
 
+  // Estimated download size (bytes) for the pending setup, so the consent
+  // window can state it and block if the disk cannot hold it.
+  const setupSizeBytes = useCallback((kind: "brain" | "vision" | null): number => {
+    const GB = 1024 * 1024 * 1024;
+    if (kind === "vision") return 6.0 * GB; // qwen2.5vl:7b
+    // brain: Ollama runtime (if missing) + chat model
+    const ollama = localStatusRef.current?.installed ? 0 : 1.5 * GB;
+    const chat = /e4b/i.test(localModelRef.current) ? 3.3 * GB : 7.5 * GB;
+    return ollama + chat;
+  }, []);
+
   const confirmSetup = useCallback(() => {
+    const k = pendingSetupRef.current;
+    // hard stop if the disk cannot hold the download plus a safety buffer
+    const need = setupSizeBytes(k) + 2 * 1024 * 1024 * 1024;
+    if (diskFreeRef.current !== null && diskFreeRef.current < need) {
+      setLocalSetup({
+        stage: "error",
+        status: `Not enough storage: this needs about ${(need / 1e9).toFixed(1)} GB free, but only ${(diskFreeRef.current / 1e9).toFixed(1)} GB is available. Install cancelled.`,
+        completed: 0,
+        total: 0,
+      });
+      setPendingSetup(null);
+      return;
+    }
     setSetupConsent(true);
     setupConsentRef.current = true;
-    const k = pendingSetupRef.current;
     setPendingSetup(null);
     if (k === "vision") setupVisionModel();
     else setupLocalBrain();
-  }, [setupLocalBrain, setupVisionModel]);
+  }, [setupLocalBrain, setupVisionModel, setupSizeBytes]);
 
   const declineSetup = useCallback(() => {
     const k = pendingSetupRef.current;
@@ -1769,6 +1864,15 @@ export const useRobert = () => {
     openPersona,
     resetPersona,
     reloadPersona: loadPersona,
+    voices: VOICES,
+    voiceMax: VOICE_MAX,
+    selectedVoices,
+    applyVoices,
+    voicePickerOpen,
+    setVoicePickerOpen,
+    onboardingStep,
+    setOnboardingStep,
+    finishOnboarding,
     notes,
     groundingSource,
     notesFolder,
@@ -1792,6 +1896,8 @@ export const useRobert = () => {
     pendingSetup,
     confirmSetup,
     declineSetup,
+    diskFree,
+    setupSizeBytes,
     modelsLocation,
     visionModel,
     setVisionModel,

@@ -43,6 +43,88 @@ function labelOf(root: string): string {
   return root.split(".").pop() || root;
 }
 
+type VoiceItem = { id: string; label: string; trait: string };
+
+/// Modal multi-select for persona voices: searchable, capped, shows each trait.
+function VoicePicker({
+  voices, max, initial, onSave, onClose, title, subtitle,
+}: {
+  voices: VoiceItem[];
+  max: number;
+  initial: string[];
+  onSave: (ids: string[]) => void;
+  onClose?: () => void;
+  title: string;
+  subtitle: string;
+}) {
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState<string[]>(initial.slice(0, max));
+  const list = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return voices;
+    return voices.filter((v) => v.label.toLowerCase().includes(t) || v.trait.toLowerCase().includes(t));
+  }, [q, voices]);
+  const toggle = (id: string) =>
+    setSel((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= max ? cur : [...cur, id]));
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+      <div className="w-full max-w-[560px] h-[70vh] flex flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
+        <div className="px-4 pt-3 pb-2 border-b border-neutral-800">
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="text-[11px] text-neutral-500 mt-0.5">{subtitle}</div>
+          <div className="flex items-center gap-2 mt-2">
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search 100+ characters or traits (e.g. calm, blunt, strategist)…"
+              className="h-7 flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 text-xs outline-none focus:border-neutral-500 placeholder:text-neutral-600"
+            />
+            <span className={`text-[11px] ${sel.length >= max ? "text-amber-400" : "text-neutral-500"}`}>
+              {sel.length}/{max}
+            </span>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-2 py-2">
+          {list.map((v) => {
+            const on = sel.includes(v.id);
+            const full = !on && sel.length >= max;
+            return (
+              <button
+                key={v.id}
+                onClick={() => toggle(v.id)}
+                disabled={full}
+                className={`w-full text-left flex gap-2 items-start px-2 py-1.5 rounded ${
+                  on ? "bg-sky-950/50 border border-sky-800" : "border border-transparent hover:bg-neutral-800/60"
+                } ${full ? "opacity-40" : ""}`}
+              >
+                <span className={`mt-[2px] h-3.5 w-3.5 shrink-0 rounded-sm border ${on ? "bg-sky-500 border-sky-500" : "border-neutral-600"}`} />
+                <span className="min-w-0">
+                  <span className="text-[12px] text-neutral-100">{v.label}</span>
+                  <span className="block text-[11px] text-neutral-500 leading-snug">{v.trait}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex justify-between items-center gap-2 px-4 py-3 border-t border-neutral-800">
+          <span className="text-[10px] text-neutral-600">Up to {max}, so your voice stays coherent. Editable later in settings.</span>
+          <div className="flex gap-2">
+            {onClose && (
+              <button onClick={onClose} className="h-7 px-3 text-[11px] font-medium rounded-md border border-neutral-700 hover:bg-neutral-800">
+                Cancel
+              </button>
+            )}
+            <button onClick={() => onSave(sel)} className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500">
+              Save voice
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const FIELD =
   "h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs text-neutral-100 outline-none focus:border-neutral-500 placeholder:text-neutral-600";
 const BTN =
@@ -211,6 +293,28 @@ export default function Robert() {
                 ? "Robert will download a vision model (about 6 GB) so Solve screen works offline. It is saved in your Robert folder. This can take a few minutes."
                 : "Robert will install Ollama if needed and download the local model (about 7.5 GB). Everything is saved in your Robert folder and runs on this machine. This can take several minutes."}
             </p>
+            {(() => {
+              const need = r.setupSizeBytes(r.pendingSetup) + 2 * 1024 * 1024 * 1024;
+              const dl = r.setupSizeBytes(r.pendingSetup);
+              const enough = r.diskFree === null || r.diskFree >= need;
+              return (
+                <div className="mt-3 rounded border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-[11px]">
+                  <div className="flex justify-between text-neutral-300">
+                    <span>Download size</span>
+                    <span>~{(dl / 1e9).toFixed(1)} GB</span>
+                  </div>
+                  <div className="flex justify-between text-neutral-400 mt-0.5">
+                    <span>Free space on this machine</span>
+                    <span>{r.diskFree === null ? "checking…" : `${(r.diskFree / 1e9).toFixed(1)} GB`}</span>
+                  </div>
+                  {!enough && (
+                    <div className="mt-1.5 text-red-400">
+                      Not enough storage. Free up space (need about {(need / 1e9).toFixed(1)} GB including a safety buffer) or use a cloud brain instead.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <p className="text-[11px] text-neutral-500 mt-2">
               Nothing is downloaded until you choose Continue. You can also cancel and use a cloud brain with your own key instead.
             </p>
@@ -223,13 +327,73 @@ export default function Robert() {
               </button>
               <button
                 onClick={r.confirmSetup}
-                className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500"
+                disabled={r.diskFree !== null && r.diskFree < r.setupSizeBytes(r.pendingSetup) + 2 * 1024 * 1024 * 1024}
+                className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Continue
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* First-run onboarding: step 1 résumé (recommended), step 2 voice */}
+      {r.onboardingStep === "resume" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
+          <div className="w-full max-w-[440px] rounded-lg border border-neutral-700 bg-neutral-900 p-5 shadow-xl">
+            <div className="text-sm font-semibold mb-1">Welcome to Robert. Add your résumé?</div>
+            <p className="text-[12px] leading-6 text-neutral-400">
+              Highly recommended. Robert turns your résumé into a profile it uses to tailor
+              every answer to your real experience, and to map any job description you add
+              later. It stays on this machine.
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-2">pdf, docx, txt, or md. You can skip and add it anytime.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => r.setOnboardingStep("voice")}
+                className="h-7 px-3 text-[11px] font-medium rounded-md border border-neutral-700 hover:bg-neutral-800"
+              >
+                Skip
+              </button>
+              <label className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500 flex items-center cursor-pointer">
+                Add résumé
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.txt,.text,.md,.rtf"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) r.uploadFiles(e.target.files);
+                    e.currentTarget.value = "";
+                    r.setOnboardingStep("voice");
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+      {r.onboardingStep === "voice" && (
+        <VoicePicker
+          voices={r.voices}
+          max={r.voiceMax}
+          initial={r.selectedVoices}
+          title="Pick Robert's voice"
+          subtitle="Choose up to 3 characters whose speaking style shapes how Robert talks. This becomes your persona and is used in every answer."
+          onSave={(ids) => { r.applyVoices(ids); r.finishOnboarding(); }}
+          onClose={r.finishOnboarding}
+        />
+      )}
+      {/* Voice picker opened later from settings */}
+      {r.voicePickerOpen && r.onboardingStep === null && (
+        <VoicePicker
+          voices={r.voices}
+          max={r.voiceMax}
+          initial={r.selectedVoices}
+          title="Choose Robert's voice"
+          subtitle="Up to 3 characters shape how Robert talks. Saved into your persona file."
+          onSave={(ids) => { r.applyVoices(ids); r.setVoicePickerOpen(false); }}
+          onClose={() => r.setVoicePickerOpen(false)}
+        />
       )}
 
       {/* Draggable top bar + primary controls */}
@@ -258,7 +422,7 @@ export default function Robert() {
         )}
         {/* the big empty area drags the window across both screens */}
         <div data-tauri-drag-region className="flex-1 self-stretch" />
-        <div className="flex items-center h-7 bg-neutral-900/60 border border-neutral-700 rounded-md p-0.5">
+        <div className="flex items-center h-7 bg-neutral-800 border border-neutral-700 rounded-md p-0.5">
           {(["auto", "listening"] as const).map((m) => (
             <button
               key={m}
@@ -288,7 +452,7 @@ export default function Robert() {
         </button>
         <button
           onClick={r.respondNow}
-          className="h-7 px-3 text-[11px] font-medium rounded-md bg-sky-600 hover:bg-sky-500"
+          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
           title="Answer the last thing said, right now"
         >
           Respond
@@ -702,29 +866,30 @@ export default function Robert() {
         </Section>
 
         <Section
-          title="Persona"
-          hint="How Robert talks and what it never does. It is a file in your notes folder: open it in any editor, press Reload. Meeting facts do not belong there. While you have not edited it, app updates to the default persona apply automatically."
+          title="Voice"
+          hint="Robert's rules (how it answers, what it never does) are fixed by the app and always current. Only the VOICE is yours to change: pick up to 3 characters whose speaking style shapes how Robert talks. It is saved in _persona.md and used in every answer alongside your meeting knowledge."
         >
-          <span className="h-7 flex items-center font-mono text-[12px] text-neutral-100">{r.personaFile}</span>
-          <span
-            className={`h-5 px-1.5 rounded-full border text-[10px] flex items-center ${
-              r.personaCustomized ? "border-sky-700 text-sky-300" : "border-neutral-600 text-neutral-300"
-            }`}
-          >
-            {r.personaCustomized ? "customized" : "default"}
-          </span>
-          <span className="text-[11px] text-neutral-400">{r.persona.length.toLocaleString()} chars</span>
-          <button onClick={r.openPersona} className={BTN} title="Open the persona file in your editor">
+          <span className="h-7 flex items-center text-[11px] text-neutral-500">Rules: fixed by Robert</span>
+          {r.personaCustomized && (
+            <span className="h-5 px-1.5 rounded-full border border-sky-700 text-sky-300 text-[10px] flex items-center">hand-edited</span>
+          )}
+          <button onClick={() => r.setVoicePickerOpen(true)} className={BTN} title="Pick up to 3 anime characters whose style shapes how Robert talks">
+            Choose voice
+          </button>
+          <button onClick={r.openPersona} className={BTN} title="Open the voice file to hand-tune it">
             Open
           </button>
-          <button onClick={r.reloadPersona} className={BTN} title="Re-read the file after editing">
+          <button onClick={r.reloadPersona} className={BTN} title="Re-read the voice file after editing">
             Reload
           </button>
-          {r.personaCustomized && (
-            <button onClick={r.resetPersona} className={BTN} title="Overwrite the file with Robert's default persona">
-              Reset to default
-            </button>
-          )}
+          <button onClick={r.resetPersona} className={BTN} title="Reset the voice to Robert's default and clear picks">
+            Reset voice
+          </button>
+          <span className="basis-full text-[10px] text-neutral-500 truncate">
+            {r.selectedVoices.length > 0
+              ? "Voice: " + r.voices.filter((v) => r.selectedVoices.includes(v.id)).map((v) => v.label).join(" · ")
+              : "Voice: Robert default"}
+          </span>
         </Section>
       </div>
     </div>
