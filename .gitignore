@@ -23,3 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 src-tauri/resources/models/
+
+# secrets / signing keys / local ops (never commit)
+.env
+.env.*
+*.key
+*.pem
+*.password.txt
+ops/

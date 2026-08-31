@@ -1,3 +1,23 @@
+# Robert — build & run from source
+
+Robert is a local-first meeting copilot (Tauri + Rust + React). To run it from a fresh clone:
+
+```bash
+git clone <this repo>
+cd robert/pluely
+./setup.sh            # macOS / Linux  (Windows: .\setup.ps1)
+```
+
+`setup.sh` installs the toolchain if missing (Rust, Linux WebKit deps), installs the JS
+dependencies, then builds and launches Robert. For live development use `npm run tauri dev`.
+Prebuilt Windows installers are on the Releases page.
+
+Prerequisites the script checks for: Node.js 20+, Rust (rustup), and on Windows LLVM
+(for whisper-rs). Nothing else is required — the local AI model is fetched on first run
+from inside the app, not bundled.
+
+---
+
 # Pluely 🚀
 
 <a href="https://pluely.com/">

@@ -1291,7 +1291,15 @@ pub fn robert_read_note(notes_folder: Option<String>, name: String) -> Result<Op
 #[tauri::command]
 pub fn robert_note_path(notes_folder: Option<String>, name: String) -> Result<String, String> {
     let (_, base) = resolve_notes_folder(notes_folder)?;
-    Ok(base.join(name.replace("..", "")).to_string_lossy().to_string())
+    // sanitize to a bare filename: no path separators, no traversal, no absolute
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .collect();
+    if safe.is_empty() || safe.starts_with('.') || safe.contains("..") {
+        return Err("invalid note name".into());
+    }
+    Ok(base.join(&safe).to_string_lossy().to_string())
 }
 
 /// Write a top-level note into the notes folder (e.g. meeting takeaways), so
