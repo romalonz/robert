@@ -404,6 +404,124 @@ pub async fn robert_suggest_local(
     ollama_chat(&model, &system, &user, max_tokens.unwrap_or(320)).await
 }
 
+/// ── Vision: solve a screenshot of a technical problem ──────────────────────
+/// Local vision model via Ollama (qwen2.5vl etc.): /api/chat with an images
+/// array (raw base64, no data-URI prefix).
+#[tauri::command]
+pub async fn robert_vision_local(
+    model: String,
+    system: String,
+    user: String,
+    image_base64: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+    let url = format!("{}/api/chat", base);
+    let body = serde_json::json!({
+        "model": if model.trim().is_empty() { "qwen2.5vl:7b" } else { &model },
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user, "images": [image_base64]}
+        ],
+        "stream": false,
+        "keep_alive": "30m",
+        "options": {"num_ctx": 8192, "num_predict": max_tokens.unwrap_or(700), "temperature": 0.2}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(240))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("local vision unreachable at {}: {} (is Ollama running?)", base, e))?;
+    if !res.status().is_success() {
+        let code = res.status();
+        let txt = res.text().await.unwrap_or_default();
+        if txt.contains("model") && (txt.contains("not found") || txt.contains("try pulling")) {
+            return Err(format!("vision model not installed. In settings, set a vision model (e.g. qwen2.5vl:7b) and click Set up. ({})", code));
+        }
+        return Err(format!("local vision {}: {}", code, txt));
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        .ok_or_else(|| "empty response from local vision model".to_string())
+}
+
+/// OpenAI-compatible vision: image_url with a data URI in the content array.
+#[tauri::command]
+pub async fn robert_vision_openai(
+    api_key: String,
+    model: String,
+    system: String,
+    user: String,
+    image_base64: String,
+    base_url: Option<String>,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    if api_key.trim().is_empty() { return Err("missing API key".into()); }
+    let base = base_url.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| "https://api.openai.com/v1".into());
+    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens.unwrap_or(700),
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "text", "text": user},
+                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", image_base64)}}
+            ]}
+        ]
+    });
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
+    let res = client.post(&url).bearer_auth(api_key.trim()).json(&body).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        let code = res.status(); let txt = res.text().await.unwrap_or_default();
+        return Err(format!("vision {}: {}", code, txt));
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    v.pointer("/choices/0/message/content").and_then(|c| c.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        .ok_or_else(|| "empty vision response".to_string())
+}
+
+/// Anthropic vision: an image content block (base64 source) + a text block.
+#[tauri::command]
+pub async fn robert_vision_anthropic(
+    api_key: String,
+    model: String,
+    system: String,
+    user: String,
+    image_base64: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    if api_key.trim().is_empty() { return Err("missing Anthropic API key".into()); }
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens.unwrap_or(700),
+        "system": system,
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
+                {"type": "text", "text": user}
+            ]}
+        ]
+    });
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
+    let res = client.post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key.trim())
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        let code = res.status(); let txt = res.text().await.unwrap_or_default();
+        return Err(format!("vision {}: {}", code, txt));
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    v.pointer("/content/0/text").and_then(|c| c.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        .ok_or_else(|| "empty vision response".to_string())
+}
+
 /// Streaming local brain: same call as robert_suggest_local but emits each
 /// token to the frontend as it is generated (event "robert://token", tagged
 /// with `req_id`), so a long answer appears progressively instead of after the

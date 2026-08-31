@@ -246,6 +246,14 @@ export default function Robert() {
           ))}
         </div>
         <button
+          onClick={r.solveScreen}
+          disabled={r.screenSolving}
+          className="px-2.5 py-1 text-[11px] rounded border border-neutral-600 hover:bg-neutral-800 font-medium disabled:opacity-50"
+          title="Snip a coding or technical problem on your screen and get a full solution (uses the selected brain's vision model)"
+        >
+          {r.screenSolving ? "Solving…" : "Solve screen"}
+        </button>
+        <button
           onClick={r.respondNow}
           className="px-3 py-1 text-[11px] rounded bg-sky-600 hover:bg-sky-500 font-medium"
           title="Answer the last thing said, right now"
@@ -361,6 +369,42 @@ export default function Robert() {
         )}
       </div>
 
+      {/* Solve-screen result: full solution to a snipped technical problem */}
+      {(r.screenSolving || r.screenAnswer || r.screenError) && (
+        <div className="mx-4 mb-2 rounded border border-sky-900/60 bg-sky-950/20">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-sky-900/40">
+            <span className="text-[10px] uppercase tracking-wide text-sky-400">
+              Screen answer {r.screenSolving ? "· solving…" : ""}
+            </span>
+            <div className="flex items-center gap-2">
+              {r.screenAnswer && (
+                <button
+                  onClick={() => navigator.clipboard.writeText(r.screenAnswer)}
+                  className="text-[11px] text-neutral-400 hover:text-neutral-200"
+                >
+                  Copy
+                </button>
+              )}
+              {(r.screenAnswer || r.screenError) && (
+                <button
+                  onClick={() => { r.setScreenAnswer(""); }}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-300"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          {r.screenError ? (
+            <div className="px-3 py-2 text-[11px] text-red-400">{r.screenError}</div>
+          ) : (
+            <pre className="px-3 py-2 text-[12px] leading-6 text-neutral-200 whitespace-pre-wrap font-mono max-h-[40vh] overflow-y-auto">
+{r.screenAnswer || "Drag a rectangle around the problem on your screen…"}
+            </pre>
+          )}
+        </div>
+      )}
+
       {/* Settings: one row per section, header left, controls right. Explanations
           live in tooltips (hover the header), not in the panel. */}
       <div className="px-3 pb-3 pt-2 border-t border-neutral-800/50 flex flex-col gap-2.5">
@@ -439,6 +483,19 @@ export default function Robert() {
                   )}
                 </>
               )}
+              <span className="basis-full flex items-center gap-2 text-[11px] text-neutral-400">
+                <span className="text-[10px] text-neutral-600 uppercase tracking-wide">Vision (Solve screen)</span>
+                <input
+                  value={r.visionModel}
+                  onChange={(e) => r.setVisionModel(e.target.value)}
+                  placeholder="qwen2.5vl:7b"
+                  title="A vision-capable Ollama model for Solve screen (reads a screenshot of a coding/technical problem). qwen2.5vl:7b ~6 GB."
+                  className={FIELD + " w-[150px]"}
+                />
+                <button onClick={r.setupVisionModel} className={BTN} title="Download the vision model (about 6 GB for qwen2.5vl:7b)">
+                  Set up vision
+                </button>
+              </span>
             </>
           ) : (
             <>
@@ -455,6 +512,9 @@ export default function Robert() {
                 placeholder={`model: ${CLOUD_PROVIDERS.find((p) => p.id === r.provider)?.defaultModel}`}
                 className={FIELD + " w-[170px]"}
               />
+              <span className="basis-full text-[10px] text-neutral-600">
+                Solve screen uses this same model — make sure it is vision-capable (GPT-4o, Claude, Gemini all are).
+              </span>
             </>
           )}
           <button onClick={r.testBrain} disabled={r.brainTest.status === "testing"} className={BTN} title="Send a tiny test request to the selected brain">

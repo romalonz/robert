@@ -227,10 +227,12 @@ ${ANSWER_FORMAT_BLOCK}
 ## What I do today
 ## Employment highlights (numbers as on my profile)
 ## Projects and freelance work
+## Illustrative project scenarios (sample, adapt to your real work)
+(4 to 6 DISTINCT, detailed sample projects a person in THIS role would plausibly have delivered for a company like this one. Research what such projects actually involve. Each one covers a DIFFERENT capability from the JD and uses DIFFERENT numbers and a DIFFERENT context, so answers have variety. Format each as "### <short project title>" then five short lines: "Plan:", "Design:", "Develop:", "Implement:", "Result:" with a concrete metric. These are illustrative examples grounded in the profile's real skills to give me varied material to speak to, not claimed history: begin this section with one line "These are sample scenarios based on typical work for this role; adapt to your real projects.")
 ## The company (researched; say "as I understand it")
 ## A day in this job
 ## Likely questions and my bullets
-(one "### <question>" per question, two bullets each; 8 to 10 questions)
+(one "### <question>" per question, two bullets each; 8 to 10 questions. Each answer must draw on a DIFFERENT project, scenario, or metric than the others; never reuse the same project or the same number twice, and never repeat a phrasing.)
 ## 30-60-90
 ## Questions I can ask them
 ## Hard rules for my answers
@@ -266,9 +268,22 @@ B) Anything else (agenda, brief, handover, project document, report, notes, tran
 Rules:
 - Use only facts from the SOURCE and, when given, the PROFILE. Never invent numbers, names, dates, or claims. Where the source has nothing for a section, write one bullet starting with "(add:" that says what to fill in.
 - For A: map EVERY requirement to the PROFILE. When the profile lacks it, start the bullet with "Bridge:" and give the closest related experience from the profile. When no profile is given, write "(add: your experience with <requirement>)".
-- For A, "A day in this job" and "Likely questions" may draw on general knowledge of the role; end such bullets with "(general knowledge, verify)".
-- Quote every number exactly as written in the source. Short bullets. Plain English. No em dashes. No tables. First person for anything I would say.
-- Keep the whole file under 12,000 characters (a PROFILE may run to 14,000).`;
+- For A, "A day in this job", "Illustrative project scenarios", and "Likely questions" may draw on general knowledge of the role. The scenarios and any invented specifics are illustrative examples to adapt, not the profile's real history; keep them realistic and mention the company or its context, but do not present a made-up metric as a fact from the profile.
+- VARIETY IS REQUIRED: across the whole file, do not repeat the same project, the same metric, or the same sentence shape. Every requirement, scenario, and question answer should surface DIFFERENT material so the live answers never sound redundant. Real profile numbers stay exact; illustrative numbers should each be different and plausible.
+- Quote every real number exactly as written in the source. Short bullets. Plain English. No em dashes. No tables. First person for anything I would say.
+- Keep the whole file under 14,000 characters (a PROFILE may run to 14,000).`;
+
+// System prompt for the "Solve screen" vision feature: reads a screenshot of a
+// technical-interview task and returns a complete, correct answer.
+const SOLVE_SYSTEM = `You are shown a screenshot from a technical interview or a live technical task. It may be a coding problem, a SQL query task, a system-design prompt, a spreadsheet/formula task, or a tool/CRM configuration task. Read EVERYTHING visible in the image, including any examples, constraints, and starter code.
+
+Respond in this order, plain text (use a fenced code block for any code or SQL):
+1. One line: what is being asked.
+2. Approach: 2 to 4 short steps in plain words.
+3. Solution: the complete, correct, runnable answer. For a coding problem, full code in the language shown (or Python if none is shown). For SQL, the exact query. For system design or config, a concrete, specific design or the exact steps.
+4. Complexity: time and space, only if it is an algorithm.
+
+Be correct and complete over clever. If the image is unreadable or not a task, say so in one line.`;
 
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
@@ -340,6 +355,13 @@ export const useRobert = () => {
     () => (localStorage.getItem("robert.callType") as any) || "auto"
   );
   const [participants, setParticipants] = useState<string[]>([]); // names heard this call
+  // Solve screen (technical-interview vision): local vision model + result panel
+  const [visionModel, setVisionModel] = useState<string>(
+    () => localStorage.getItem("robert.visionModel") || "qwen2.5vl:7b"
+  );
+  const [screenAnswer, setScreenAnswer] = useState<string>("");
+  const [screenSolving, setScreenSolving] = useState<boolean>(false);
+  const [screenError, setScreenError] = useState<string>("");
   // Knowledge inbox (files dropped/uploaded, waiting to be rewritten to spec)
   const [inbox, setInbox] = useState<string[]>([]);
   const [convertStatus, setConvertStatus] = useState<string>("");
@@ -424,6 +446,8 @@ export const useRobert = () => {
   const callTypeRef = useRef(callType);
   callTypeRef.current = callType;
   const rosterRef = useRef<string[]>([]); // colleague names heard this call
+  const visionModelRef = useRef(visionModel);
+  visionModelRef.current = visionModel;
   const convCtx = (): ConvContext => ({
     aliases: parseAliases(myNameRef.current),
     roster: rosterRef.current,
@@ -558,6 +582,7 @@ export const useRobert = () => {
   useEffect(() => localStorage.setItem("robert.myName", myName), [myName]);
 
   useEffect(() => localStorage.setItem("robert.callType", callType), [callType]);
+  useEffect(() => localStorage.setItem("robert.visionModel", visionModel), [visionModel]);
   useEffect(() => localStorage.setItem(LS.provider, provider), [provider]);
   useEffect(() => localStorage.setItem(LS.notesFolder, notesFolder), [notesFolder]);
 
@@ -1334,7 +1359,7 @@ export const useRobert = () => {
           `SOURCE:\n${ex.text}\n\n` +
           (profile ? `PROFILE (my experience, use it to map requirements):\n${profile}\n\n` : "PROFILE: none given.\n\n") +
           `Write the Markdown file now.`;
-        let out = (await brainCall(CONVERT_SYSTEM, user, 3000)).trim();
+        let out = (await brainCall(CONVERT_SYSTEM, user, 4200)).trim();
         out = out.replace(/^```(?:markdown|md)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
         if (!out.startsWith("#")) out = `# ${file.replace(/\.[^.]+$/, "")}\n\n${out}`;
         const title = (out.split("\n")[0] || "").replace(/^#+\s*/, "");
@@ -1559,6 +1584,74 @@ export const useRobert = () => {
     setupLocalBrain();
   }, [provider, localStatus, setupLocalBrain]);
 
+  // ── Solve screen: capture a region and send it to a vision model ──────────
+  const visionCall = useCallback(async (imageB64: string): Promise<string> => {
+    const prov = providerRef.current;
+    if (prov === "local") {
+      return await invoke<string>("robert_vision_local", {
+        model: visionModelRef.current || "qwen2.5vl:7b",
+        system: SOLVE_SYSTEM,
+        user: "Solve the task in this screenshot.",
+        imageBase64: imageB64,
+        maxTokens: 900,
+      });
+    }
+    const meta = CLOUD_PROVIDERS.find((p) => p.id === prov);
+    const key = (cloudKeysRef.current[prov] || "").trim();
+    if (!key) throw new Error(`Add your ${meta?.label ?? prov} API key in settings.`);
+    const mdl = (cloudModelsRef.current[prov] || meta?.defaultModel || "").trim();
+    if (prov === "anthropic") {
+      return await invoke<string>("robert_vision_anthropic", {
+        apiKey: key, model: mdl || "claude-opus-5", system: SOLVE_SYSTEM,
+        user: "Solve the task in this screenshot.", imageBase64: imageB64, maxTokens: 900,
+      });
+    }
+    const baseUrl = prov === "custom" ? customBaseUrlRef.current.trim() : meta?.baseUrl || "";
+    return await invoke<string>("robert_vision_openai", {
+      apiKey: key, model: mdl, system: SOLVE_SYSTEM,
+      user: "Solve the task in this screenshot.", imageBase64: imageB64, baseUrl, maxTokens: 900,
+    });
+  }, []);
+
+  const solveScreen = useCallback(async () => {
+    setScreenError("");
+    setScreenSolving(true);
+    setScreenAnswer("");
+    let un: undefined | (() => void);
+    try {
+      // one-shot: the next captured selection is the problem to solve
+      un = await listen<string>("captured-selection", async (e) => {
+        if (un) { un(); un = undefined; }
+        const b64 = e.payload;
+        if (!b64) { setScreenSolving(false); setScreenError("Nothing was captured."); return; }
+        try {
+          const out = await visionCall(b64);
+          setScreenAnswer(out.trim());
+        } catch (err: any) {
+          setScreenError(String(err));
+        } finally {
+          setScreenSolving(false);
+        }
+      });
+      await invoke("start_screen_capture");
+    } catch (err: any) {
+      if (un) un();
+      setScreenSolving(false);
+      setScreenError(String(err));
+    }
+  }, [visionCall]);
+
+  const setupVisionModel = useCallback(async () => {
+    setScreenError("");
+    setLocalSetup({ stage: "start", status: `Downloading vision model ${visionModelRef.current}…`, completed: 0, total: 0 });
+    try {
+      await invoke("robert_setup_local", { model: visionModelRef.current || "qwen2.5vl:7b" });
+      setLocalSetup({ stage: "done", status: "Vision model ready", completed: 1, total: 1 });
+    } catch (e: any) {
+      setLocalSetup({ stage: "error", status: String(e), completed: 0, total: 0 });
+    }
+  }, []);
+
   // Re-ground when the notes folder changes (debounced while typing a path)
   // or when a different note file is selected (immediate).
   useEffect(() => {
@@ -1647,6 +1740,14 @@ export const useRobert = () => {
     localSetup,
     refreshLocalStatus,
     setupLocalBrain,
+    visionModel,
+    setVisionModel,
+    screenAnswer,
+    setScreenAnswer,
+    screenSolving,
+    screenError,
+    solveScreen,
+    setupVisionModel,
     recordMeetings,
     setRecordMeetings,
     useMemory,
