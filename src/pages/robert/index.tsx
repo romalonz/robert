@@ -791,9 +791,19 @@ export default function Robert() {
                   title="A vision-capable Ollama model for Solve screen (reads a screenshot of a coding/technical problem). qwen2.5vl:7b ~6 GB."
                   className={FIELD + " w-[150px]"}
                 />
-                <button onClick={() => r.requestSetup("vision")} className={BTN} title="Download the vision model (about 6 GB for qwen2.5vl:7b)">
-                  Set up vision
-                </button>
+                {(() => {
+                  const base = (x: string) => x.split(":")[0];
+                  const visionReady = r.localStatus?.models?.some(
+                    (m) => m === r.visionModel || base(m) === base(r.visionModel)
+                  );
+                  return visionReady ? (
+                    <span className="text-[11px] text-emerald-400 truncate">ready · {r.visionModel} installed</span>
+                  ) : (
+                    <button onClick={() => r.requestSetup("vision")} className={BTN} title="Download the vision model (about 6 GB for qwen2.5vl:7b)">
+                      Set up vision
+                    </button>
+                  );
+                })()}
               </span>
               {r.modelsLocation && (
                 <span className="basis-full text-[10px] text-neutral-600 truncate" title={r.modelsLocation}>
