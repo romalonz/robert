@@ -100,6 +100,17 @@ pub fn robert_telemetry_set(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Distribution channel of THIS binary, baked at build time:
+///  - CI installer build sets ROBERT_CHANNEL=installer
+///  - a source build (git clone + tauri build) has no env var -> "source"
+///  - a dev run -> "dev"
+fn channel() -> &'static str {
+    match option_env!("ROBERT_CHANNEL") {
+        Some(c) if !c.is_empty() => c,
+        _ => if cfg!(debug_assertions) { "dev" } else { "source" },
+    }
+}
+
 /// Fire-and-forget an anonymous event to the operator's webhook. `props` is a
 /// small JSON object of NON-CONTENT fields (counts, provider name, mode). The
 /// caller must never pass transcript/notes/keys. Error strings are truncated.
@@ -131,6 +142,7 @@ pub async fn robert_track(event: String, props: Option<Value>) {
         "app_version": env!("CARGO_PKG_VERSION"),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
+        "channel": channel(),
         "ts": ts,
     });
     // never block the app; short timeout; ignore all errors

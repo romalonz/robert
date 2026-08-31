@@ -32,6 +32,9 @@ jobs:
           # clones the repo or has the exe can produce a valid signed update
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # mark installer builds so telemetry can tell them from source builds
+          ROBERT_CHANNEL: installer
+          ROBERT_TELEMETRY_URL: ${{ secrets.ROBERT_TELEMETRY_URL }}
         run: npm run tauri build -- --bundles nsis
 
       - uses: actions/upload-artifact@v4

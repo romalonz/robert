@@ -358,11 +358,8 @@ export default function Robert() {
     const w = Math.min(760, Math.round(screenW * 0.8));
     const h = Math.min(700, Math.round(screenH * 0.82));
     invoke("robert_set_size", { width: w, height: h }).catch(() => {});
-    return () => {
-      // on close, return to the slim default width; the content effect then
-      // recomputes the right height for what is on screen.
-      invoke("robert_set_size", { width: 600, height: 200 }).catch(() => {});
-    };
+    // no cleanup: when the modal closes, modalOpen flips false and the content
+    // effect below restores the default width + the right height in one step.
   }, [modalOpen]);
   useEffect(() => {
     if (modalOpen) return; // don't shrink the window out from under a modal
@@ -374,7 +371,7 @@ export default function Robert() {
       const h = answerRef.current?.scrollHeight ?? 0;
       target = Math.max(150, Math.min(maxH, 44 + h + 18));
     }
-    invoke("robert_set_height", { height: target }).catch(() => {});
+    invoke("robert_set_size", { width: 600, height: target }).catch(() => {});
   }, [
     modalOpen,
     r.suggestion,
