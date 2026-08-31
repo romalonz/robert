@@ -132,6 +132,7 @@ pub fn run() {
             robert::robert_suggest_anthropic,
             robert::robert_suggest_local,
             robert::robert_suggest_local_stream,
+            robert::robert_clipboard_image,
             robert::robert_vision_local,
             robert::robert_vision_openai,
             robert::robert_vision_anthropic,

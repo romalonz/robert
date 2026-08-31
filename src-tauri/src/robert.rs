@@ -404,6 +404,27 @@ pub async fn robert_suggest_local(
     ollama_chat(&model, &system, &user, max_tokens.unwrap_or(320)).await
 }
 
+/// Read an image from the clipboard as base64 PNG. Needs NO screen-recording
+/// permission (the OS screenshot tool captured it, not us) — the fallback for
+/// locked-down machines where live screen capture is blocked. Take a shot with
+/// the OS shortcut that copies to the clipboard, then call this.
+#[tauri::command]
+pub fn robert_clipboard_image() -> Result<String, String> {
+    use base64::Engine;
+    use image::codecs::png::PngEncoder;
+    use image::{ColorType, ImageEncoder};
+    let mut cb = arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?;
+    let img = cb.get_image().map_err(|_| {
+        "No image on the clipboard. Take a screenshot to the clipboard first, then try again.".to_string()
+    })?;
+    let (w, h) = (img.width as u32, img.height as u32);
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(&img.bytes, w, h, ColorType::Rgba8.into())
+        .map_err(|e| format!("encode failed: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
 /// ── Vision: solve a screenshot of a technical problem ──────────────────────
 /// Local vision model via Ollama (qwen2.5vl etc.): /api/chat with an images
 /// array (raw base64, no data-URI prefix).

@@ -1776,6 +1776,25 @@ export const useRobert = () => {
     }
   }, [visionCall]);
 
+  // No-permission path: solve whatever image is on the clipboard (the OS
+  // screenshot tool captured it, so Robert needs no screen-recording access).
+  const solveClipboard = useCallback(async () => {
+    setScreenError("");
+    setScreenSolving(true);
+    setScreenAnswer("");
+    try {
+      const b64 = await invoke<string>("robert_clipboard_image");
+      const out = await visionCall(b64);
+      setScreenAnswer(out.trim());
+      track("solve_screen", { ok: true, provider: providerRef.current, via: "clipboard" });
+    } catch (err: any) {
+      setScreenError(String(err));
+      track("error", { where: "solve_clipboard", msg: String(err).slice(0, 200) });
+    } finally {
+      setScreenSolving(false);
+    }
+  }, [visionCall, track]);
+
   const setupVisionModel = useCallback(async () => {
     setScreenError("");
     setLocalSetup({ stage: "start", status: `Downloading vision model ${visionModelRef.current}…`, completed: 0, total: 0 });
@@ -1965,6 +1984,7 @@ export const useRobert = () => {
     screenSolving,
     screenError,
     solveScreen,
+    solveClipboard,
     setupVisionModel,
     recordMeetings,
     setRecordMeetings,

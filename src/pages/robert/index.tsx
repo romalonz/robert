@@ -555,9 +555,17 @@ export default function Robert() {
           onClick={r.solveScreen}
           disabled={r.screenSolving}
           className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
-          title="Snip a coding or technical problem on your screen and get a full solution (uses the selected brain's vision model)"
+          title="Snip a problem on your screen (needs Screen Recording permission). If that is blocked, use Solve clipboard instead."
         >
           {r.screenSolving ? "Solving…" : "Solve screen"}
+        </button>
+        <button
+          onClick={r.solveClipboard}
+          disabled={r.screenSolving}
+          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
+          title="Copy a screenshot to your clipboard first (macOS: Cmd+Ctrl+Shift+4 then select; Windows: Win+Shift+S), then click this. No screen-recording permission needed."
+        >
+          Solve clipboard
         </button>
         <button
           onClick={r.respondNow}
@@ -705,7 +713,7 @@ export default function Robert() {
             <div className="px-3 py-2 text-[11px] text-red-400">{r.screenError}</div>
           ) : (
             <pre className="px-3 py-2 text-[12px] leading-6 text-neutral-200 whitespace-pre-wrap font-mono max-h-[40vh] overflow-y-auto">
-{r.screenAnswer || "Drag a rectangle around the problem on your screen…"}
+{r.screenAnswer || "Solve screen: drag a box around the problem. Solve clipboard: copy a screenshot first (Cmd+Ctrl+Shift+4 on Mac, Win+Shift+S on Windows), then click Solve clipboard — no screen-recording permission needed."}
             </pre>
           )}
         </div>
