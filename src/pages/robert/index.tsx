@@ -171,6 +171,20 @@ function VoicePicker({
   );
 }
 
+/// Immediate, readable hover description for a control (native title tooltips
+/// are slow and tiny). Wrap a button in <Tip text="…">…</Tip>.
+function Tip({ text, side = "center", children }: { text: string; side?: "center" | "left" | "right"; children: React.ReactNode }) {
+  const pos = side === "right" ? "right-0" : side === "left" ? "left-0" : "left-1/2 -translate-x-1/2";
+  return (
+    <span className="relative group inline-flex items-center">
+      {children}
+      <span className={`pointer-events-none absolute top-full mt-1.5 hidden group-hover:block z-[60] w-max max-w-[240px] rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1 text-[10px] leading-snug text-neutral-100 shadow-lg ${pos}`}>
+        {text}
+      </span>
+    </span>
+  );
+}
+
 const FIELD =
   "h-7 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs text-neutral-100 outline-none focus:border-neutral-500 placeholder:text-neutral-600";
 const BTN =
@@ -533,61 +547,70 @@ export default function Robert() {
         <div data-tauri-drag-region className="flex-1 self-stretch" />
         <div className="flex items-center h-7 bg-neutral-800 border border-neutral-700 rounded-md p-0.5">
           {(["auto", "listening"] as const).map((m) => (
-            <button
+            <Tip
               key={m}
-              onClick={() => r.setMode(m)}
-              className={`h-6 px-3 text-[11px] font-medium rounded transition-colors ${
-                r.mode === m
-                  ? "bg-neutral-700 text-white"
-                  : "text-neutral-400 hover:text-neutral-200"
-              }`}
-              title={
+              side="left"
+              text={
                 m === "auto"
-                  ? "Reads the room: questions, pushback, briefings, group handoffs. Interview files switch it to interview pacing by themselves."
-                  : "Stay quiet while you present; answer only when asked directly."
+                  ? "Auto: reads the room and answers when it's naturally your turn (questions, pushback, group handoffs). An interview file switches it to interview pacing on its own."
+                  : "Listen: stays quiet while you present and answers only when someone asks you directly."
               }
             >
-              {m === "auto" ? "Auto" : "Listen"}
-            </button>
+              <button
+                onClick={() => r.setMode(m)}
+                className={`h-6 px-3 text-[11px] font-medium rounded transition-colors ${
+                  r.mode === m ? "bg-neutral-700 text-white" : "text-neutral-400 hover:text-neutral-200"
+                }`}
+              >
+                {m === "auto" ? "Auto" : "Listen"}
+              </button>
+            </Tip>
           ))}
         </div>
-        <button
-          onClick={r.solveScreen}
-          disabled={r.screenSolving}
-          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
-          title="Snip a problem on your screen (needs Screen Recording permission). If that is blocked, use Solve clipboard instead."
-        >
-          {r.screenSolving ? "Solving…" : "Solve screen"}
-        </button>
-        <button
-          onClick={r.solveClipboard}
-          disabled={r.screenSolving}
-          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
-          title="Copy a screenshot to your clipboard first (macOS: Cmd+Ctrl+Shift+4 then select; Windows: Win+Shift+S), then click this. No screen-recording permission needed."
-        >
-          Solve clipboard
-        </button>
-        <button
-          onClick={r.respondNow}
-          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
-          title="Answer the last thing said, right now"
-        >
-          Respond
-        </button>
+        <Tip side="center" text="Snip a coding or technical problem on your screen and get a full solution. Needs macOS Screen Recording permission — if that's blocked, use Solve clipboard.">
+          <button
+            onClick={r.solveScreen}
+            disabled={r.screenSolving}
+            className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
+          >
+            {r.screenSolving ? "Solving…" : "Solve screen"}
+          </button>
+        </Tip>
+        <Tip side="center" text="Copy a screenshot first (Mac: Cmd+Ctrl+Shift+4 then drag; Windows: Win+Shift+S), then click to solve it. No screen-recording permission needed.">
+          <button
+            onClick={r.solveClipboard}
+            disabled={r.screenSolving}
+            className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
+          >
+            Solve clipboard
+          </button>
+        </Tip>
+        <Tip side="center" text="Answer the last thing said right now, on demand — even if Robert was waiting.">
+          <button
+            onClick={r.respondNow}
+            className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
+          >
+            Respond
+          </button>
+        </Tip>
         {r.running ? (
-          <button
-            onClick={r.stop}
-            className="h-7 px-3 text-[11px] font-medium rounded-md bg-red-600 hover:bg-red-500"
-          >
-            Stop
-          </button>
+          <Tip side="right" text="Stop listening and, if recording is on, save the meeting takeaways.">
+            <button
+              onClick={r.stop}
+              className="h-7 px-3 text-[11px] font-medium rounded-md bg-red-600 hover:bg-red-500"
+            >
+              Stop
+            </button>
+          </Tip>
         ) : (
-          <button
-            onClick={() => r.start()}
-            className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500"
-          >
-            Start
-          </button>
+          <Tip side="right" text="Start listening to the selected app and suggesting answers.">
+            <button
+              onClick={() => r.start()}
+              className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-600 hover:bg-emerald-500"
+            >
+              Start
+            </button>
+          </Tip>
         )}
       </div>
 
