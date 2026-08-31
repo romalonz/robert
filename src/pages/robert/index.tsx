@@ -65,6 +65,30 @@ function Section({ title, hint, children }: { title: string; hint: string; child
   );
 }
 
+/// Render a suggested line so bullet answers breathe: each "- " / "*" / "•"
+/// line becomes a spaced bullet row, plain lines become spaced paragraphs.
+/// Display only; the underlying text is unchanged.
+function AnswerBody({ text, size }: { text: string; size: "lg" | "sm" }) {
+  const lines = text.split("\n").map((l) => l.trimEnd()).filter((l, i, a) => l !== "" || (i > 0 && a[i - 1] !== ""));
+  const base = size === "lg" ? "text-[15px] leading-7" : "text-[12px] leading-6 text-neutral-400";
+  return (
+    <div className={`${base} whitespace-pre-wrap space-y-1.5`}>
+      {lines.map((l, i) => {
+        const m = l.match(/^\s*([-*•])\s+(.*)$/);
+        if (m) {
+          return (
+            <div key={i} className="flex gap-2">
+              <span className="select-none opacity-50 mt-[1px]">•</span>
+              <span className="flex-1">{m[2]}</span>
+            </div>
+          );
+        }
+        return <div key={i}>{l}</div>;
+      })}
+    </div>
+  );
+}
+
 export default function Robert() {
   const r = useRobert();
   const [showNotes, setShowNotes] = useState(false);
@@ -246,7 +270,7 @@ export default function Robert() {
       </div>
 
       {/* The answer fills the bar */}
-      <div ref={answerRef} className="px-3 py-2.5">
+      <div ref={answerRef} className="px-4 py-3">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[10px] uppercase tracking-wide text-neutral-500">
             {r.suggesting
@@ -279,11 +303,14 @@ export default function Robert() {
             </button>
           )}
         </div>
-        <div className="text-[15px] leading-relaxed whitespace-pre-wrap min-h-[2.5rem]">
-          {r.suggestion ||
-            (r.suggesting
-              ? "Robert is thinking…"
-              : "Suggestions appear here after each turn.")}
+        <div className="min-h-[2.5rem]">
+          {r.suggestion ? (
+            <AnswerBody text={r.suggestion} size="lg" />
+          ) : (
+            <div className="text-[15px] leading-7 text-neutral-500">
+              {r.suggesting ? "Robert is thinking…" : "Suggestions appear here after each turn."}
+            </div>
+          )}
         </div>
         {/* Earlier answers survive rapid-fire questioning (dimmed, newest first) */}
         {r.answers
@@ -292,11 +319,11 @@ export default function Robert() {
           .map((a) => (
             <div
               key={a.text.slice(0, 60)}
-              className="mt-2 pt-2 border-t border-neutral-800/60"
+              className="mt-3 pt-3 border-t border-neutral-800/60"
             >
               <div className="flex items-start justify-between gap-2">
-                <div className="text-[12px] leading-snug text-neutral-400 whitespace-pre-wrap">
-                  {a.text}
+                <div className="flex-1 min-w-0">
+                  <AnswerBody text={a.text} size="sm" />
                 </div>
                 <button
                   onClick={() => navigator.clipboard.writeText(a.text)}

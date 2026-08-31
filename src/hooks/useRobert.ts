@@ -602,6 +602,44 @@ export const useRobert = () => {
     []
   );
 
+  // Streaming variant used ONLY for the primary answer generation so a long
+  // reply appears progressively. Local brain streams token-by-token via the
+  // "robert://token" event; cloud/anthropic/custom fall back to one onToken
+  // with the full result (they are fast enough). Nothing else about suggest()
+  // changes: the final humanize, cap, store, and monotonic-display logic runs
+  // on the returned full string exactly as before.
+  const brainCallStream = useCallback(
+    async (
+      system: string,
+      user: string,
+      maxTokens: number,
+      reqId: number,
+      onToken: (full: string) => void
+    ): Promise<string> => {
+      if (providerRef.current === "local") {
+        let un: undefined | (() => void);
+        try {
+          un = await listen<{ id: number; text: string }>("robert://token", (e) => {
+            if (e.payload && e.payload.id === reqId) onToken(e.payload.text || "");
+          });
+          return await invoke<string>("robert_suggest_local_stream", {
+            reqId,
+            model: localModelRef.current || "gemma4:12b",
+            system,
+            user,
+            maxTokens,
+          });
+        } finally {
+          if (un) un();
+        }
+      }
+      const full = await brainCall(system, user, maxTokens);
+      onToken(full);
+      return full;
+    },
+    [brainCall]
+  );
+
   // Append one event to the current meeting's transcript log (if recording).
   const logEvent = useCallback((obj: Record<string, unknown>) => {
     const dir = meetingDirRef.current;
@@ -741,7 +779,19 @@ export const useRobert = () => {
         `- If a good answer needs current or external info you are not sure of, reply EXACTLY: NEEDS_RESEARCH: <focused web query>\n` +
         `- Otherwise give me a short, natural, speakable answer (one to three sentences) I can say almost verbatim, using the concrete specifics from my notes when they apply. If a claim seems off, make it a polite probing question. No labels, just the answer.`;
       const asked = segment || turnText; // what this request is answering
-      let first = (await askBrain(prompt)).trim();
+      // Stream the primary answer to the overlay: reveal progressively once we
+      // can rule out a WAIT / NEEDS_RESEARCH control reply, so a long answer
+      // shows its first words fast instead of after the whole generation.
+      const reveal = (buf: string) => {
+        const t = buf.trimStart();
+        if (t.length < 10 && !t.includes("\n")) return; // not enough to judge yet
+        if (/^\s*(WAIT\b|NEEDS_RESEARCH\s*:)/i.test(t)) return; // control reply, keep thinking
+        if (id < displayedIdRef.current) return; // a newer answer already owns the screen
+        setSuggestion(t);
+      };
+      let first = (
+        await brainCallStream(composeGrounding(), prompt, budget, id, reveal)
+      ).trim();
       // forced but it still hesitated: ask plainly for a line.
       if (force && /^WAIT\b/i.test(first)) {
         first = (

@@ -130,6 +130,7 @@ pub fn run() {
             robert::robert_suggest,
             robert::robert_suggest_anthropic,
             robert::robert_suggest_local,
+            robert::robert_suggest_local_stream,
             robert::robert_research_free,
             robert::robert_prewarm_cache,
             robert::robert_prewarm_local,

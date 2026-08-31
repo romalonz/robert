@@ -404,6 +404,82 @@ pub async fn robert_suggest_local(
     ollama_chat(&model, &system, &user, max_tokens.unwrap_or(320)).await
 }
 
+/// Streaming local brain: same call as robert_suggest_local but emits each
+/// token to the frontend as it is generated (event "robert://token", tagged
+/// with `req_id`), so a long answer appears progressively instead of after the
+/// whole generation. Returns the full text at the end. Non-streaming callers
+/// (cloud, rewrite, research) keep using robert_suggest_local.
+#[tauri::command]
+pub async fn robert_suggest_local_stream(
+    app: tauri::AppHandle,
+    req_id: u64,
+    model: String,
+    system: String,
+    user: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    use tauri::Emitter;
+    let model = if model.trim().is_empty() { LOCAL_DEFAULT_MODEL.to_string() } else { model };
+    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+    let url = format!("{}/api/chat", base);
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ],
+        "stream": true,
+        "think": false,
+        "keep_alive": "60m",
+        "options": {
+            "num_ctx": local_num_ctx(&system),
+            "num_predict": max_tokens.unwrap_or(320),
+            "temperature": 0.6
+        }
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(240))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("local brain unreachable at {}: {} (is Ollama running?)", base, e))?;
+    if !res.status().is_success() {
+        let code = res.status();
+        let txt = res.text().await.unwrap_or_default();
+        return Err(format!("local brain {}: {}", code, txt));
+    }
+    use futures_util::StreamExt;
+    let mut stream = res.bytes_stream();
+    let mut buf = String::new();
+    let mut full = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(nl) = buf.find('\n') {
+            let line = buf[..nl].trim().to_string();
+            buf = buf[nl + 1..].to_string();
+            if line.is_empty() { continue; }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                if let Some(tok) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+                    if !tok.is_empty() {
+                        full.push_str(tok);
+                        let _ = app.emit("robert://token", serde_json::json!({"id": req_id, "text": full}));
+                    }
+                }
+                if v.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                    let _ = app.emit("robert://token", serde_json::json!({"id": req_id, "text": full, "done": true}));
+                }
+            }
+        }
+    }
+    Ok(full.trim().to_string())
+}
+
 /// Load the local model and evaluate the grounding prefix before the first
 /// real turn, so turn one is as fast as turn ten. Uses the same num_ctx and
 /// keep_alive as robert_suggest_local — that is what makes the KV prefix
