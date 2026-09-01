@@ -242,6 +242,13 @@ const ANSWER_FORMAT_BLOCK = `## Answer format
 - Default: at most 400 characters in total, 2 to 3 short bullets, each one a fact, number, or claim I can say out loud.
 - Narrative questions (walk me through, tell me about yourself, employment history, career path, end to end, give me an example): up to 900 characters, 4 to 6 bullets in time order, each with one number or name.`;
 
+// Applied to EVERY answer when the selected notes file defines no "## Answer
+// format" of its own (e.g. profile.md). Intro first, then the complete answer —
+// the shape Romeo asked for so cloud (and local) answers read "our way".
+const DEFAULT_ANSWER_FORMAT = `- Open with ONE short intro sentence that frames the point in my own words — a genuine lead-in, never a canned opener ("great question", "I understand", "that's fair").
+- Then give the COMPLETE answer: the specific facts, numbers, and names from my notes that fully address what was asked. Don't drop the detail that makes it usable.
+- Natural and speakable, as if I thought of it myself. Usually 3 to 5 sentences — complete over terse, but no padding.`;
+
 const CONVERT_SYSTEM = `You convert one source document into ONE Markdown knowledge file for Robert, a live meeting copilot that reads the file during a call and quotes it. Output ONLY the Markdown file: no commentary, no code fences, no preamble.
 
 First decide the document type, then use the matching structure.
@@ -566,7 +573,7 @@ export const useRobert = () => {
       (notesRef.current ? NOTES_HEADER + notesRef.current : "") +
       (fmt
         ? `\n\n## ANSWER FORMAT (set by my meeting knowledge file; overrides every rule above about sentence count, length, and bullet points)\n${fmt.text}\n`
-        : "")
+        : `\n\n## ANSWER FORMAT (default — shape every answer this way)\n${DEFAULT_ANSWER_FORMAT}\n`)
     );
   };
   // Anonymous usage/error telemetry to the operator's webhook (privacy-safe:
@@ -929,7 +936,7 @@ export const useRobert = () => {
           : "") +
         `- They have already paused by the time you see this. Reply EXACTLY WAIT only if they are clearly mid-thought, or the text sounds like my own voice echoed back. When in doubt, give me a line.\n` +
         `- If a good answer needs current or external info you are not sure of, reply EXACTLY: NEEDS_RESEARCH: <focused web query>\n` +
-        `- Otherwise give me a short, natural, speakable answer (one to three sentences) I can say almost verbatim, using the concrete specifics from my notes when they apply. If a claim seems off, make it a polite probing question. No labels, just the answer.`;
+        `- Otherwise give me the answer to say, in my Answer format above: open with a one-line intro that frames the point in my own words, then the complete answer using the concrete specifics (numbers, names, facts) from my notes. Natural and speakable, as if I thought of it. If a claim seems off, make it a polite probing question. No labels, just the answer.`;
       const asked = segment || turnText; // what this request is answering
       // Stream the primary answer to the overlay: reveal progressively once we
       // can rule out a WAIT / NEEDS_RESEARCH control reply, so a long answer

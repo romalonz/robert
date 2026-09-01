@@ -129,8 +129,17 @@ fn transcribe(
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_suppress_blank(true);
+    // Cheap decode wins: each call transcribes an independent tail window, so
+    // carrying decoder context between calls only adds work and repetition.
+    params.set_no_context(true);
+    params.set_single_segment(true);
+    // Disable temperature fallback so a marginal decode is not silently re-run at
+    // higher temperature — on a slow CPU that re-run is pure added latency.
+    params.set_temperature_inc(0.0);
+    // Leave headroom for the UI, WebView and capture thread instead of grabbing
+    // every logical core (oversubscription just adds contention for whisper).
     let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8) as i32)
+        .map(|n| (n.get().saturating_sub(2)).clamp(2, 6) as i32)
         .unwrap_or(4);
     params.set_n_threads(threads);
     if state.full(params, samples).is_err() {
