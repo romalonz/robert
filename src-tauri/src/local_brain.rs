@@ -33,7 +33,7 @@ pub struct Recommendation {
     pub why: String,
 }
 
-fn total_ram_bytes() -> Option<u64> {
+pub fn total_ram_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
         let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;

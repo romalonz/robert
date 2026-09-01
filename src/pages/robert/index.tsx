@@ -820,6 +820,13 @@ export default function Robert() {
                   )}
                 </>
               )}
+              {r.localRamGb > 0 && r.localRamGb < 10 && (
+                <span className="basis-full text-[11px] text-amber-400 leading-snug">
+                  This PC has ~{r.localRamGb.toFixed(0)} GB RAM. A local model won't fit in memory here — it
+                  pages to disk, which spins the fan and slows other apps (browser, video). A cloud brain
+                  (pick a provider above and paste your own key) is dramatically faster and won't slow the PC.
+                </span>
+              )}
               <span className="basis-full flex items-center gap-2 text-[11px] text-neutral-400">
                 <span className="text-[10px] text-neutral-600 uppercase tracking-wide">Vision (Solve screen)</span>
                 <input

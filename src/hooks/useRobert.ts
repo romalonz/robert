@@ -436,6 +436,10 @@ export const useRobert = () => {
     completed: number;
     total: number;
   } | null>(null);
+  // This machine's total RAM (GB). Drives the low-RAM warning that steers weak
+  // PCs to a cloud brain — a local model that doesn't fit pages to disk and
+  // slows the whole system. 0 = unknown/not yet read.
+  const [localRamGb, setLocalRamGb] = useState<number>(0);
   // Consent gate: nothing is installed/downloaded until the user says Continue.
   const [setupConsent, setSetupConsent] = useState<boolean>(false);
   const [pendingSetup, setPendingSetup] = useState<null | "brain" | "vision">(null);
@@ -1728,12 +1732,15 @@ export const useRobert = () => {
     }
   }, []);
 
-  // First launch: pick the model this machine can run (12b needs ~16 GB RAM,
-  // otherwise e4b), once, unless the user already chose one.
+  // First launch: pick the model this machine can run (gemma4:12b at every tier;
+  // below ~9 GB it runs but is slow and a cloud brain is far better), once,
+  // unless the user already chose one. Always record RAM so the settings panel
+  // can warn a low-RAM PC even after the one-time recommendation has run.
   useEffect(() => {
-    if (localStorage.getItem("robert.localRecommended") === "1") return;
     invoke<{ ram_gb: number; model: string; why: string }>("robert_local_recommend")
       .then((rec) => {
+        if (rec.ram_gb > 0) setLocalRamGb(rec.ram_gb);
+        if (localStorage.getItem("robert.localRecommended") === "1") return;
         localStorage.setItem("robert.localRecommended", "1");
         if (rec.ram_gb > 0 && rec.model !== localModelRef.current && !localStorage.getItem("robert.localModelChosen")) {
           setLocalModel(rec.model);
@@ -2014,6 +2021,7 @@ export const useRobert = () => {
     uploadFiles,
     refreshInbox,
     localStatus,
+    localRamGb,
     localSetup,
     refreshLocalStatus,
     setupLocalBrain,

@@ -312,11 +312,38 @@ const LOCAL_DEFAULT_MODEL: &str = "gemma4:12b";
 /// per-turn user text) keeps num_ctx identical across every call of a meeting,
 /// so Ollama reuses the loaded runner and its KV prefix cache instead of
 /// re-evaluating the grounding each turn.
+/// True on a RAM-starved machine (< ~12 GB), where a CPU-resident model already
+/// spills into the pagefile. Both the KV cache size and how long we keep the
+/// model hot are dialed back there so Robert stops holding the rest of the system
+/// (browser, video) hostage to page faults.
+fn low_ram() -> bool {
+    matches!(crate::local_brain::total_ram_bytes(), Some(b) if (b as f64 / 1_073_741_824.0) < 12.0)
+}
+
+/// How long Ollama keeps the model resident after a call. On a workstation we
+/// keep it hot for an hour so live-call turns stay fast; on a low-RAM box that
+/// same hour means ~10 GB of commit and continuous pagefile churn for the rest of
+/// the hour AFTER the user stops, so we let it fall out of memory quickly.
+fn local_keep_alive() -> &'static str {
+    if low_ram() {
+        "90s"
+    } else {
+        "60m"
+    }
+}
+
 fn local_num_ctx(system: &str) -> u64 {
     let est_tokens = (system.len() as u64) / 3; // conservative chars->tokens
     let needed = est_tokens + 4096; // headroom: history + turn + output
     let rounded = needed.div_ceil(4096) * 4096;
-    rounded.clamp(8192, 65536)
+    // The KV cache for a big context is memory a low-RAM machine doesn't have (it
+    // lands in the pagefile alongside the weights), so cap it hard there. A full
+    // window only pays off when there's RAM to hold it.
+    if low_ram() {
+        rounded.clamp(4096, 8192)
+    } else {
+        rounded.clamp(8192, 65536)
+    }
 }
 
 /// One /api/chat call to the local Ollama brain. `think:false` suppresses
@@ -339,7 +366,7 @@ async fn ollama_chat(
         ],
         "stream": false,
         "think": false,
-        "keep_alive": "60m",
+        "keep_alive": local_keep_alive(),
         "options": {
             "num_ctx": local_num_ctx(system),
             "num_predict": num_predict,
@@ -452,8 +479,8 @@ pub async fn robert_vision_local(
             {"role": "user", "content": user, "images": [image_base64]}
         ],
         "stream": false,
-        "keep_alive": "30m",
-        "options": {"num_ctx": 8192, "num_predict": max_tokens.unwrap_or(700), "temperature": 0.2}
+        "keep_alive": local_keep_alive(),
+        "options": {"num_ctx": if low_ram() { 4096 } else { 8192 }, "num_predict": max_tokens.unwrap_or(700), "temperature": 0.2}
     });
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(240))
@@ -576,7 +603,7 @@ pub async fn robert_suggest_local_stream(
         ],
         "stream": true,
         "think": false,
-        "keep_alive": "60m",
+        "keep_alive": local_keep_alive(),
         "options": {
             "num_ctx": local_num_ctx(&system),
             "num_predict": max_tokens.unwrap_or(320),
