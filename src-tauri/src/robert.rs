@@ -329,7 +329,7 @@ async fn ollama_chat(
     num_predict: u64,
 ) -> Result<String, String> {
     let base = std::env::var("ROBERT_OLLAMA_URL")
-        .unwrap_or_else(|_| "http://localhost:11434".into());
+        .unwrap_or_else(|_| "http://127.0.0.1:11434".into());
     let url = format!("{}/api/chat", base);
     let mut body = serde_json::json!({
         "model": model,
@@ -436,7 +436,7 @@ pub async fn robert_vision_local(
     image_base64: String,
     max_tokens: Option<u64>,
 ) -> Result<String, String> {
-    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
     let url = format!("{}/api/chat", base);
     let body = serde_json::json!({
         "model": if model.trim().is_empty() { "qwen2.5vl:7b" } else { &model },
@@ -559,7 +559,7 @@ pub async fn robert_suggest_local_stream(
 ) -> Result<String, String> {
     use tauri::Emitter;
     let model = if model.trim().is_empty() { LOCAL_DEFAULT_MODEL.to_string() } else { model };
-    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
     let url = format!("{}/api/chat", base);
     let body = serde_json::json!({
         "model": model,

@@ -75,7 +75,10 @@ pub fn robert_local_recommend() -> Recommendation {
 }
 
 fn base_url() -> String {
-    std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into())
+    // Use the IPv4 loopback explicitly: on Windows "localhost" often resolves to
+    // IPv6 ::1 first, but Ollama binds 127.0.0.1 — so "localhost" makes every
+    // /api call fail to connect and the server looks like it "never started".
+    std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -454,7 +457,162 @@ async fn run_installer_until_binary(exe: &PathBuf, args: &[&str], timeout_secs: 
 
 /// Pull a model with progress events. Ollama streams JSON lines:
 /// {"status":"pulling ...","digest":..,"total":..,"completed":..}
+/// Download a model. Prefer driving the `ollama` CLI directly — it talks to the
+/// server over Ollama's own client (never our reqwest/localhost path), resumes
+/// partial downloads natively, and is immune to the IPv6/localhost and proxy
+/// quirks that make the HTTP /api/pull flow stall on some Windows machines.
+/// Falls back to the HTTP API if the CLI binary can't be located or launched.
 async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
+    if ollama_binary().is_some() {
+        match pull_via_cli(app, model).await {
+            Ok(()) => return Ok(()),
+            Err(e) if e == "cancelled" => return Err(e),
+            Err(e) => {
+                // CLI path failed for some other reason — try the HTTP API before
+                // giving up, so we degrade gracefully rather than hard-fail.
+                emit(app, "pull", &format!("Retrying via API ({e})"), 0, 0);
+            }
+        }
+    }
+    pull_via_http(app, model).await
+}
+
+/// Run `ollama pull <model>` as a subprocess and translate its live output into
+/// `robert://local` progress events. Ollama writes its progress bar and status
+/// lines to stderr (using \r to redraw), so we read stderr, split on \r/\n, and
+/// pull a percentage out of each segment. On Windows we spawn it headless (no
+/// flashing console window). Cancellation kills the child.
+async fn pull_via_cli(app: &AppHandle, model: &str) -> Result<(), String> {
+    use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
+
+    let bin = ollama_binary().ok_or_else(|| "ollama binary not found".to_string())?;
+    let mut cmd = tokio::process::Command::new(&bin);
+    cmd.arg("pull")
+        .arg(model)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("could not launch ollama pull: {e}"))?;
+    let mut err = child
+        .stderr
+        .take()
+        .ok_or_else(|| "no stderr from ollama".to_string())?;
+
+    emit(app, "pull", &format!("Downloading {model}…"), 0, 0);
+
+    let mut raw = [0u8; 4096];
+    let mut seg = String::new();
+    let mut tail = String::new();
+    let mut last = std::time::Instant::now();
+    loop {
+        if cancelled().is_err() {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err("cancelled".to_string());
+        }
+        // Short read timeout so we re-check cancellation even when Ollama is
+        // quiet (e.g. verifying a large layer).
+        match tokio::time::timeout(std::time::Duration::from_millis(500), err.read(&mut raw)).await {
+            Err(_) => continue,
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
+                let s = String::from_utf8_lossy(&raw[..n]);
+                for ch in s.chars() {
+                    if ch == '\r' || ch == '\n' {
+                        process_pull_segment(app, model, seg.trim(), &mut tail, &mut last);
+                        seg.clear();
+                    } else {
+                        seg.push(ch);
+                    }
+                }
+            }
+            Ok(Err(e)) => return Err(format!("reading ollama output: {e}")),
+        }
+    }
+    if !seg.trim().is_empty() {
+        process_pull_segment(app, model, seg.trim(), &mut tail, &mut last);
+    }
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    if status.success() {
+        emit(app, "pull", &format!("Downloading {model}: success"), 100, 100);
+        Ok(())
+    } else {
+        let msg = tail.trim();
+        let msg = msg.lines().last().unwrap_or("").trim();
+        if msg.is_empty() {
+            Err("ollama pull failed".to_string())
+        } else {
+            Err(msg.to_string())
+        }
+    }
+}
+
+/// Turn one line/segment of `ollama pull` output into a progress event.
+fn process_pull_segment(
+    app: &AppHandle,
+    model: &str,
+    seg: &str,
+    tail: &mut String,
+    last: &mut std::time::Instant,
+) {
+    if seg.is_empty() {
+        return;
+    }
+    // Keep a rolling tail of non-progress lines for error reporting.
+    if !seg.contains('%') {
+        tail.push_str(seg);
+        tail.push('\n');
+        if tail.len() > 2000 {
+            *tail = tail[tail.len() - 2000..].to_string();
+        }
+    }
+    if let Some(pct) = parse_percent(seg) {
+        if last.elapsed().as_millis() > 250 || pct >= 100 {
+            emit(app, "pull", &format!("Downloading {model}… {pct}%"), pct as u64, 100);
+            *last = std::time::Instant::now();
+        }
+    } else if last.elapsed().as_millis() > 250 {
+        // A status phrase like "pulling manifest" / "verifying sha256 digest".
+        emit(app, "pull", &format!("Downloading {model}: {seg}"), 0, 0);
+        *last = std::time::Instant::now();
+    }
+}
+
+/// Extract the integer immediately preceding a `%` (e.g. `45` from `... 45% ...`).
+fn parse_percent(s: &str) -> Option<u32> {
+    let bytes = s.as_bytes();
+    let pos = s.find('%')?;
+    let mut i = pos;
+    let mut digits: Vec<u8> = Vec::new();
+    while i > 0 {
+        i -= 1;
+        if bytes[i].is_ascii_digit() {
+            digits.push(bytes[i]);
+        } else {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        return None;
+    }
+    digits.reverse();
+    let num: u32 = std::str::from_utf8(&digits).ok()?.parse().ok()?;
+    (num <= 100).then_some(num)
+}
+
+async fn pull_via_http(app: &AppHandle, model: &str) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60 * 60 * 3))
         .build()
@@ -510,7 +668,11 @@ pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalSt
                 install_ollama(&app).await?;
             }
             emit(&app, "start", "Starting Ollama", 0, 0);
-            start_ollama(&app).await?;
+            // Best-effort: this spawns `ollama serve` and waits for it. Even if
+            // the wait times out, the server process is still coming up, and the
+            // CLI `ollama pull` below drives it directly — so don't hard-fail the
+            // whole setup on a slow start.
+            let _ = start_ollama(&app).await;
         }
         let have = list_models().await.unwrap_or_default();
         if !have.iter().any(|m| model_matches(m, &model)) {
