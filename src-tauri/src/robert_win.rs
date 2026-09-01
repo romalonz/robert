@@ -156,9 +156,131 @@ fn transcribe(
     text.trim().to_string()
 }
 
-/// The engine loop: capture -> resample -> VAD -> end-of-turn -> events.
-/// Runs on its own thread until `stop` is set.
+/// Streaming sherpa-onnx zipformer engine (primary). Feeds the audio stream
+/// incrementally and emits `partial` events as words arrive, `final` at each
+/// detected endpoint (built-in rule-based trailing-silence). Returns Err ONLY if
+/// the model can't be loaded (so the caller falls back to whisper); a clean stop
+/// returns Ok. ONNX Runtime does runtime CPU dispatch, so this is safe on any CPU.
+fn run_engine_sherpa(app: &AppHandle, stop: &Arc<AtomicBool>) -> Result<(), String> {
+    use sherpa_transducers::asr::Model;
+
+    emit_line(
+        app,
+        serde_json::json!({"type": "status", "stage": "loading_model", "engine": "streaming"}),
+    );
+
+    let threads = std::thread::available_parallelism()
+        .map(|n| (n.get().saturating_sub(2)).clamp(2, 6))
+        .unwrap_or(4);
+    // Fetch the streaming zipformer (cached after first run) and build the model.
+    let cfg = tauri::async_runtime::block_on(Model::from_pretrained(
+        "nytopop/zipformer-en-2023-06-21-320ms",
+    ))
+    .map_err(|e| format!("model fetch: {e}"))?;
+    let model = cfg
+        .sample_rate(TARGET_RATE)
+        .num_threads(threads)
+        .cpu()
+        .detect_endpoints(true)
+        .rule2_min_trailing_silence(0.8_f32) // end a turn ~0.8s after they stop
+        .build()
+        .map_err(|e| format!("model build: {e}"))?;
+    let mut asr = model.online_stream().map_err(|e| format!("stream: {e}"))?;
+
+    // WASAPI system-audio loopback — same capture path as the whisper engine.
+    let input = SpeakerInput::new().map_err(|e| format!("system audio capture failed: {e}"))?;
+    let mut stream = input.stream();
+    let source_rate = stream.sample_rate().max(8000) as usize;
+
+    let captured: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured2 = captured.clone();
+    let stop3 = stop.clone();
+    let cap_handle = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            let mut chunk: Vec<f32> = Vec::with_capacity(1024);
+            while !stop3.load(Ordering::Relaxed) {
+                match stream.next().await {
+                    Some(s) => {
+                        chunk.push(s);
+                        if chunk.len() >= 1024 {
+                            captured2.lock().unwrap().extend_from_slice(&chunk);
+                            chunk.clear();
+                        }
+                    }
+                    None => break,
+                }
+            }
+        });
+    });
+
+    emit_line(
+        app,
+        serde_json::json!({"type": "status", "stage": "ready", "target": "system.audio", "engine": "streaming"}),
+    );
+
+    // Streaming loop: sherpa resamples internally, so hand it raw source-rate audio.
+    let mut shown = String::new();
+    while !stop.load(Ordering::Relaxed) {
+        let raw: Vec<f32> = {
+            let mut g = captured.lock().unwrap();
+            std::mem::take(&mut *g)
+        };
+        if !raw.is_empty() {
+            asr.accept_waveform(source_rate, &raw);
+        }
+        while asr.is_ready() {
+            asr.decode();
+        }
+        let text = asr.result().unwrap_or_default();
+        let t = text.trim();
+        if asr.is_endpoint() {
+            if !t.is_empty() {
+                emit_line(app, serde_json::json!({"type": "final", "text": t}));
+            }
+            asr.reset();
+            shown.clear();
+        } else if !t.is_empty() && t != shown {
+            emit_line(app, serde_json::json!({"type": "partial", "text": t}));
+            shown = t.to_string();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    let _ = cap_handle.join();
+    let _ = app.emit("robert://terminated", Option::<i32>::None);
+    Ok(())
+}
+
+/// Entry point: prefer the streaming sherpa-onnx engine (real-time), fall back
+/// to the whisper.cpp engine if sherpa can't initialise (e.g. model fetch fails)
+/// or if ROBERT_STT=whisper forces it. Same events either way, so the frontend is
+/// unchanged.
 pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
+    let force_whisper = std::env::var("ROBERT_STT")
+        .map(|v| v.eq_ignore_ascii_case("whisper"))
+        .unwrap_or(false);
+    if !force_whisper {
+        match run_engine_sherpa(&app, &stop) {
+            Ok(()) => return, // ran to a clean stop
+            Err(e) => {
+                // Init failure only (the loop itself never returns Err) — tell the
+                // UI we're using the fallback and continue with whisper.
+                emit_line(
+                    &app,
+                    serde_json::json!({"type": "status", "stage": "loading_model", "note": format!("streaming engine unavailable ({e}); using whisper")}),
+                );
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
+        }
+    }
+    run_engine_whisper(app, stop);
+}
+
+/// The whisper.cpp engine (fallback): capture -> resample -> VAD -> end-of-turn.
+/// Runs on its own thread until `stop` is set.
+fn run_engine_whisper(app: AppHandle, stop: Arc<AtomicBool>) {
     emit_line(&app, serde_json::json!({"type": "status", "stage": "loading_model"}));
 
     let model_path = match ensure_model(&app) {

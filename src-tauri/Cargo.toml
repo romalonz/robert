@@ -1,6 +1,6 @@
 [package]
 name = "pluely"
-version = "0.2.11"
+version = "0.3.0"
 description = "The Open Source Alternative to Cluely - A lightning-fast, privacy-first AI assistant that works seamlessly during meetings, interviews, and conversations without anyone knowing."
 authors = ["Srikanth Nani <srikanthnani1202@gmail.com>"]
 license = "GPL-3.0"
@@ -64,8 +64,16 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wasapi = "0.19.0"
-# Robert's Windows STT engine: whisper.cpp bindings (in-process, no sidecar)
+# Robert's Windows STT engines. whisper.cpp (chunked) is the fallback; the
+# primary is sherpa-onnx streaming zipformer (real-time, word-as-you-speak).
 whisper-rs = "0.14"
+# sherpa-onnx streaming transducer. ONNX Runtime does runtime CPU dispatch (no
+# AVX-512 crash risk). static+download-binaries = prebuilt static libs (needs the
+# whole build on the static CRT — see RUSTFLAGS in windows.yml). download-models
+# = fetch the zipformer from HuggingFace on first run.
+sherpa-transducers = { version = "0.5.5", default-features = false, features = ["static", "download-binaries", "download-models"] }
+# Pin the -sys crate: 0.6.7+ added FFI struct fields that break sherpa-transducers 0.5.5.
+sherpa-rs-sys = "=0.6.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libpulse-binding = "2.30.1"

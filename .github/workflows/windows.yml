@@ -40,6 +40,11 @@ jobs:
       - name: Build Windows installer (NSIS, signed for auto-update)
         env:
           LIBCLANG_PATH: C:\Program Files\LLVM\bin
+          # sherpa-onnx's prebuilt static libs use the STATIC CRT (/MT); whisper-rs
+          # and Rust default to the DYNAMIC CRT (/MD), which collides (LNK2038/2005).
+          # Align the whole build to the static CRT so both agree. cc/cmake follow
+          # this target-feature (CMAKE_MSVC_RUNTIME_LIBRARY in the toolchain reinforces it).
+          RUSTFLAGS: "-C target-feature=+crt-static"
           # signing key lives only as an encrypted repo secret; nobody who
           # clones the repo or has the exe can produce a valid signed update
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
