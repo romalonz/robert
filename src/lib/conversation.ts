@@ -69,10 +69,6 @@ const DECISION_MARKERS =
 const BRIEFING_MARKERS =
   /\b(as you can see|next slide|moving on|agenda|let me (share|show|walk)|first(ly)?,|second(ly)?,|finally,|to summarize|the (main|key) (point|thing)s?)\b/i;
 
-// "you"/"your" means me in a 1:1; on a group call it is ambiguous and the
-// group reader decides (name match, vocative, room markers).
-const SECOND_PERSON = /\b(you|your|you'?re|yours)\b/i;
-
 function words(t: string): number {
   return t.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -175,7 +171,10 @@ export function readConversation(
         "They are pushing back or skeptical. Take their point seriously in plain words (no canned opener), then answer with the specific fact or number from my notes that addresses it, or a polite probing question. Calm, never defensive.",
     };
   }
-  if (isQuestion(lastTheirs) && (toMe || (oneOnOne && SECOND_PERSON.test(lastTheirs)))) {
+  // In a 1:1 there is no one else the other side could be asking, so ANY question
+  // they ask is mine to answer — not only explicitly second-person ones. (Group
+  // calls still require the question to be addressed to me / the room.)
+  if (isQuestion(lastTheirs) && (toMe || oneOnOne)) {
     return {
       kind: "qna",
       holdMs: 200,

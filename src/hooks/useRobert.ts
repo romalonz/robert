@@ -1435,6 +1435,31 @@ export const useRobert = () => {
       notesRef.current = g.content;
       setGroundingSource(g.source);
       setError(null);
+      // If the user never set their name, derive it from profile.md ("# Profile:
+      // <full name>"). Without a name, the group/addressing layer can NEVER mark a
+      // line as "to me", so auto mode returns WAIT every time and never speaks.
+      // Deriving it (first name + full name as aliases) makes auto-respond work
+      // with zero setup. Only fills an empty field; a user-set name always wins.
+      if (!myNameRef.current.trim()) {
+        try {
+          const prof = await invoke<string | null>("robert_find_profile", {
+            notesFolder: notesFolderRef.current,
+          });
+          const m = prof && prof.match(/^#\s*Profile:\s*(.+)$/im);
+          if (m) {
+            const full = m[1].trim().replace(/\s+/g, " ").slice(0, 60);
+            const first = full.split(" ")[0];
+            const derived =
+              first && first.toLowerCase() !== full.toLowerCase() ? `${first}, ${full}` : full;
+            if (derived) {
+              myNameRef.current = derived;
+              setMyName(derived);
+            }
+          }
+        } catch {
+          /* best effort — no profile yet is fine */
+        }
+      }
     } catch (e: any) {
       // keep the default persona grounding if nothing is on disk
       setError(String(e));
