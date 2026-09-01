@@ -114,6 +114,65 @@ impl Resampler {
     }
 }
 
+/// Spawn the WASAPI capture thread. Returns the shared sample buffer, the source
+/// sample-rate, and the thread handle. If the loopback stream ends (device or
+/// format change, the render stream stopping), it RE-ACQUIRES the stream instead
+/// of exiting forever — that silent death was the dominant "captured nothing"
+/// failure (13 of 21 sessions). Shared by both the sherpa and whisper engines.
+fn spawn_capture(
+    app: &AppHandle,
+    stop: &Arc<AtomicBool>,
+) -> Result<(Arc<std::sync::Mutex<Vec<f32>>>, f64, std::thread::JoinHandle<()>), String> {
+    let input = SpeakerInput::new().map_err(|e| format!("system audio capture failed: {e}"))?;
+    let mut stream = input.stream();
+    let source_rate = stream.sample_rate().max(8000) as f64;
+    let captured: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured2 = captured.clone();
+    let stop2 = stop.clone();
+    let app2 = app.clone();
+    let handle = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            let mut chunk: Vec<f32> = Vec::with_capacity(1024);
+            let mut fails: u32 = 0;
+            let mut warned = false;
+            while !stop2.load(Ordering::Relaxed) {
+                match stream.next().await {
+                    Some(s) => {
+                        if fails > 0 {
+                            fails = 0;
+                            warned = false;
+                        }
+                        chunk.push(s);
+                        if chunk.len() >= 1024 {
+                            if let Ok(mut g) = captured2.lock() {
+                                g.extend_from_slice(&chunk);
+                            }
+                            chunk.clear();
+                        }
+                    }
+                    None => {
+                        // The loopback ended. DON'T exit — re-acquire it. Surface a
+                        // one-time note so a dropped stream is visible, not silent.
+                        fails += 1;
+                        if fails >= 6 && !warned {
+                            warned = true;
+                            emit_line(
+                                &app2,
+                                serde_json::json!({"type":"status","stage":"ready","note":"audio stream dropped — reconnecting"}),
+                            );
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                        if let Ok(inp) = SpeakerInput::new() {
+                            stream = inp.stream();
+                        }
+                    }
+                }
+            }
+        });
+    });
+    Ok((captured, source_rate, handle))
+}
+
 fn transcribe(
     state: &mut whisper_rs::WhisperState,
     samples: &[f32],
@@ -187,31 +246,9 @@ fn run_engine_sherpa(app: &AppHandle, stop: &Arc<AtomicBool>) -> Result<(), Stri
         .map_err(|e| format!("model build: {e}"))?;
     let mut asr = model.online_stream().map_err(|e| format!("stream: {e}"))?;
 
-    // WASAPI system-audio loopback — same capture path as the whisper engine.
-    let input = SpeakerInput::new().map_err(|e| format!("system audio capture failed: {e}"))?;
-    let mut stream = input.stream();
-    let source_rate = stream.sample_rate().max(8000) as usize;
-
-    let captured: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured2 = captured.clone();
-    let stop3 = stop.clone();
-    let cap_handle = std::thread::spawn(move || {
-        tauri::async_runtime::block_on(async move {
-            let mut chunk: Vec<f32> = Vec::with_capacity(1024);
-            while !stop3.load(Ordering::Relaxed) {
-                match stream.next().await {
-                    Some(s) => {
-                        chunk.push(s);
-                        if chunk.len() >= 1024 {
-                            captured2.lock().unwrap().extend_from_slice(&chunk);
-                            chunk.clear();
-                        }
-                    }
-                    None => break,
-                }
-            }
-        });
-    });
+    // WASAPI system-audio loopback (auto-reconnecting) — shared capture path.
+    let (captured, source_rate_f, cap_handle) = spawn_capture(app, stop)?;
+    let source_rate = source_rate_f as usize;
 
     emit_line(
         app,
@@ -299,40 +336,16 @@ fn run_engine_whisper(app: AppHandle, stop: Arc<AtomicBool>) {
         Err(e) => return emit_error(&app, &format!("whisper state failed: {}", e)),
     };
 
-    // WASAPI system-audio loopback (upstream speaker module), mono f32.
-    let input = match SpeakerInput::new() {
-        Ok(i) => i,
-        Err(e) => return emit_error(&app, &format!("system audio capture failed: {}", e)),
+    // WASAPI system-audio loopback (auto-reconnecting) — shared capture path.
+    let (captured, source_rate, cap_handle) = match spawn_capture(&app, &stop) {
+        Ok(t) => t,
+        Err(e) => return emit_error(&app, &e),
     };
-    let mut stream = input.stream();
-    let source_rate = stream.sample_rate().max(8000) as f64;
     let mut resampler = Resampler::new(source_rate, TARGET_RATE as f64);
-
-    // capture thread: drain the WASAPI stream into a shared buffer
-    let captured: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured2 = captured.clone();
-    let stop3 = stop.clone();
-    let cap_handle = std::thread::spawn(move || {
-        tauri::async_runtime::block_on(async move {
-            let mut chunk: Vec<f32> = Vec::with_capacity(1024);
-            while !stop3.load(Ordering::Relaxed) {
-                match stream.next().await {
-                    Some(s) => {
-                        chunk.push(s);
-                        if chunk.len() >= 1024 {
-                            captured2.lock().unwrap().extend_from_slice(&chunk);
-                            chunk.clear();
-                        }
-                    }
-                    None => break,
-                }
-            }
-        });
-    });
 
     emit_line(
         &app,
-        serde_json::json!({"type": "status", "stage": "ready", "target": "system.audio"}),
+        serde_json::json!({"type": "status", "stage": "ready", "target": "system.audio", "engine": "whisper"}),
     );
 
     // turn loop — same constants and semantics as the macOS engine
@@ -374,7 +387,10 @@ fn run_engine_whisper(app: AppHandle, stop: Arc<AtomicBool>) {
                     .cloned()
                     .fold(f32::INFINITY, f32::min)
                     .max(1e-4);
-                let voice = avg > 0.008 || (avg > 0.003 && avg > floor * 2.5);
+                // Lowered thresholds: modest playback volume was registering as
+                // silence, producing zero-turn sessions. Still gated by the
+                // empty-decode guard below so sustained non-speech gets dropped.
+                let voice = avg > 0.004 || (avg > 0.0015 && avg > floor * 2.0);
                 samples16.extend_from_slice(&fresh);
 
                 if voice {
