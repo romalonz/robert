@@ -25,6 +25,18 @@ jobs:
       - name: Install frontend deps
         run: npm install
 
+      - name: Force a portable (AVX2, no AVX-512) whisper build
+        shell: pwsh
+        # whisper.cpp defaults to -march=native, which bakes the AVX-512-capable
+        # runner's CPU into pluely.exe and crashes AVX2-only user machines
+        # (0xc000001d). This toolchain file forces GGML_NATIVE OFF. Forward slashes
+        # so CMake doesn't choke on Windows backslashes.
+        run: |
+          $tc = ("$env:GITHUB_WORKSPACE/src-tauri/cmake/portable-x86.cmake") -replace '\\','/'
+          if (-not (Test-Path $tc)) { Write-Error "toolchain file missing: $tc"; exit 1 }
+          "CMAKE_TOOLCHAIN_FILE=$tc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "CMAKE_TOOLCHAIN_FILE=$tc"
+
       - name: Build Windows installer (NSIS, signed for auto-update)
         env:
           LIBCLANG_PATH: C:\Program Files\LLVM\bin
@@ -36,6 +48,22 @@ jobs:
           ROBERT_CHANNEL: installer
           ROBERT_TELEMETRY_URL: ${{ secrets.ROBERT_TELEMETRY_URL }}
         run: npm run tauri build -- --bundles nsis
+
+      - name: Guard — the whisper build must be AVX2, never AVX-512
+        shell: pwsh
+        # Deterministic proof the fix took: read ggml's own CMake cache. If
+        # GGML_NATIVE didn't turn off, or AVX-512 got enabled, FAIL the build here
+        # rather than ship a binary that crashes AVX2-only CPUs.
+        run: |
+          $cache = Get-ChildItem -Recurse -Filter CMakeCache.txt src-tauri\target 2>$null |
+                   Where-Object { $_.FullName -like '*whisper-rs-sys*' } | Select-Object -First 1
+          if (-not $cache) { Write-Error "no whisper-rs-sys CMakeCache.txt found — cannot verify CPU target"; exit 1 }
+          $c = Get-Content $cache.FullName -Raw
+          Write-Host "cache: $($cache.FullName)"
+          ($c -split "`n" | Select-String 'GGML_NATIVE|GGML_AVX') | ForEach-Object { Write-Host $_ }
+          if ($c -match 'GGML_NATIVE:BOOL=ON')  { Write-Error "GGML_NATIVE is ON — build would bake in -march=native (AVX-512 risk)"; exit 1 }
+          if ($c -match 'GGML_AVX512[A-Z_]*:BOOL=ON') { Write-Error "an AVX-512 option is ON — this crashes AVX2-only CPUs"; exit 1 }
+          Write-Host "OK: portable AVX2 whisper build (GGML_NATIVE off, AVX-512 off)"
 
       - uses: actions/upload-artifact@v4
         with:
