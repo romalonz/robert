@@ -75,6 +75,10 @@ jobs:
   ollama-silent-install-probe:
     runs-on: windows-latest
     timeout-minutes: 25
+    # optional canary: it already proved the silent-install path works and it
+    # downloads Ollama each run, so it is flaky. Do NOT let it fail the run or
+    # send "Run failed" emails — the installer build is the job that matters.
+    continue-on-error: true
     steps:
       - name: Download OllamaSetup.exe
         shell: pwsh
