@@ -332,6 +332,26 @@ fn local_keep_alive() -> &'static str {
     }
 }
 
+/// Translate a failed local /api/chat response into something worth showing the
+/// user. The signature failure on a small PC is llama.cpp's memory fitter
+/// aborting *before the model even loads* ("unable to fit model into system
+/// memory") — the weights simply don't fit in RAM, and no context shrink saves
+/// it. Surface that (and a generic server error on a low-RAM box) as a plain
+/// "not enough memory — use a cloud brain" instead of a raw 500 body, which is
+/// otherwise a silent non-answer.
+fn local_error_message(code: reqwest::StatusCode, txt: &str) -> String {
+    let low = txt.to_lowercase();
+    let mem = low.contains("unable to fit")
+        || low.contains("free memory")
+        || low.contains("out of memory")
+        || low.contains("cannot allocate")
+        || low.contains("insufficient memory");
+    if mem || (code.is_server_error() && low_ram()) {
+        return "Not enough free memory to run the local model on this PC. Switch to a cloud brain in Settings → Brain (choose a provider and paste your own key) — it's far faster here and uses no local RAM.".to_string();
+    }
+    format!("local brain {}: {}", code, txt)
+}
+
 fn local_num_ctx(system: &str) -> u64 {
     let est_tokens = (system.len() as u64) / 3; // conservative chars->tokens
     let needed = est_tokens + 4096; // headroom: history + turn + output
@@ -406,7 +426,7 @@ async fn ollama_chat(
                 tokio::time::sleep(std::time::Duration::from_millis(900)).await;
                 continue;
             }
-            return Err(format!("local brain {}: {}", code, txt));
+            return Err(local_error_message(code, &txt));
         }
         let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
         return v
@@ -624,7 +644,7 @@ pub async fn robert_suggest_local_stream(
     if !res.status().is_success() {
         let code = res.status();
         let txt = res.text().await.unwrap_or_default();
-        return Err(format!("local brain {}: {}", code, txt));
+        return Err(local_error_message(code, &txt));
     }
     use futures_util::StreamExt;
     let mut stream = res.bytes_stream();
