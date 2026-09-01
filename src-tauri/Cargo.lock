@@ -4632,6 +4632,7 @@ dependencies = [
  "ringbuf",
  "serde",
  "serde_json",
+ "sherpa-rs-sys",
  "sherpa-transducers",
  "tauri",
  "tauri-build",
@@ -5950,9 +5951,9 @@ dependencies = [
 
 [[package]]
 name = "sherpa-rs-sys"
-version = "0.6.8"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "591c9432b20f41d47f622a73c2888b188c321e313d820824df7d9fa51dbada43"
+checksum = "65c2f8410a2375ba1a3db48cd387e743bc7a047549b0cd1172a5cf656feb554a"
 dependencies = [
  "bindgen 0.69.5",
  "bzip2 0.4.4",

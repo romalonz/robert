@@ -70,6 +70,9 @@ whisper-rs = "0.14"
 # Runtime does runtime CPU dispatch, so no AVX-512 crash risk. static = link in,
 # no DLL to ship; download-binaries = prefetch prebuilt libs (no long C++ build).
 sherpa-transducers = { version = "0.5.5", default-features = false, features = ["static", "download-binaries"] }
+# Pin the -sys crate to the exact version sherpa-transducers 0.5.5 was built
+# against: 0.6.7+ added FFI struct fields, breaking its struct-literal inits.
+sherpa-rs-sys = "=0.6.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libpulse-binding = "2.30.1"
