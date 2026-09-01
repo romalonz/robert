@@ -33,6 +33,33 @@ fn emit_line(app: &AppHandle, obj: serde_json::Value) {
     }
 }
 
+/// Build-link validation for the streaming sherpa-onnx STT engine. This is the
+/// full streaming call shape we will use (accept_waveform → decode → result →
+/// is_endpoint → reset). It is reachable (env-gated) so the linker actually pulls
+/// the sherpa-onnx symbols — proving they link on Windows CI — but it never runs
+/// in normal use. It is NOT yet wired as the engine.
+#[allow(dead_code)]
+fn sherpa_link_probe() -> Result<(), String> {
+    use sherpa_transducers::asr::Config;
+    let model = Config::transducer("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt")
+        .sample_rate(TARGET_RATE)
+        .num_threads(2)
+        .cpu()
+        .detect_endpoints(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut s = model.online_stream().map_err(|e| e.to_string())?;
+    s.accept_waveform(TARGET_RATE, &[0.0f32; 16]);
+    while s.is_ready() {
+        s.decode();
+    }
+    let _text = s.result().map_err(|e| e.to_string())?;
+    if s.is_endpoint() {
+        s.reset();
+    }
+    Ok(())
+}
+
 fn emit_error(app: &AppHandle, msg: &str) {
     emit_line(app, serde_json::json!({"type": "error", "message": msg}));
 }
@@ -160,6 +187,11 @@ fn transcribe(
 /// Runs on its own thread until `stop` is set.
 pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
     emit_line(&app, serde_json::json!({"type": "status", "stage": "loading_model"}));
+    // Reachable (env-gated) so the sherpa-onnx symbols are linked, not dead-
+    // stripped — this is the CI build-link validation. Never set in normal use.
+    if std::env::var("ROBERT_SHERPA_PROBE").is_ok() {
+        let _ = sherpa_link_probe();
+    }
 
     let model_path = match ensure_model(&app) {
         Ok(p) => p,
