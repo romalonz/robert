@@ -1025,19 +1025,6 @@ export const useRobert = () => {
   }, [brainCall, logEvent]);
 
   // Manual trigger: force a response to the last completed turn (human-in-the-loop).
-  // Type a question and get an answer from the selected brain, with no audio at
-  // all. This is the reliable way to reach a cloud brain (and to confirm a key
-  // works) on Windows, where capture is system-audio-only and a spoken question
-  // into the mic is never heard. force=true so it always answers.
-  const askManual = useCallback(
-    (text: string) => {
-      const q = text.trim();
-      if (!q) return;
-      suggest(q, true);
-    },
-    [suggest]
-  );
-
   const respondNow = useCallback(() => {
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
@@ -2078,6 +2065,5 @@ export const useRobert = () => {
     start,
     stop,
     respondNow,
-    askManual,
   };
 };
