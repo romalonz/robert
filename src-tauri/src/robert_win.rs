@@ -288,20 +288,207 @@ fn run_engine_sherpa(app: &AppHandle, stop: &Arc<AtomicBool>) -> Result<(), Stri
     Ok(())
 }
 
-/// Entry point: prefer the streaming sherpa-onnx engine (real-time), fall back
-/// to the whisper.cpp engine if sherpa can't initialise (e.g. model fetch fails)
-/// or if ROBERT_STT=whisper forces it. Same events either way, so the frontend is
-/// unchanged.
+/// Encode 16 kHz mono f32 samples as a PCM16 WAV (RIFF) blob for POSTing.
+fn pcm16_wav_16k(samples: &[f32]) -> Vec<u8> {
+    let data_len = (samples.len() * 2) as u32;
+    let mut w = Vec::with_capacity(44 + samples.len() * 2);
+    w.extend_from_slice(b"RIFF");
+    w.extend_from_slice(&(36 + data_len).to_le_bytes());
+    w.extend_from_slice(b"WAVE");
+    w.extend_from_slice(b"fmt ");
+    w.extend_from_slice(&16u32.to_le_bytes()); // PCM fmt chunk size
+    w.extend_from_slice(&1u16.to_le_bytes()); // format = PCM
+    w.extend_from_slice(&1u16.to_le_bytes()); // channels = mono
+    w.extend_from_slice(&(TARGET_RATE as u32).to_le_bytes()); // sample rate
+    w.extend_from_slice(&((TARGET_RATE as u32) * 2).to_le_bytes()); // byte rate
+    w.extend_from_slice(&2u16.to_le_bytes()); // block align
+    w.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    w.extend_from_slice(b"data");
+    w.extend_from_slice(&data_len.to_le_bytes());
+    for &s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+        w.extend_from_slice(&v.to_le_bytes());
+    }
+    w
+}
+
+/// Is an OpenAI-compatible transcription server (e.g. Parakeet-TDT) up here?
+async fn server_health(base: &str) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.get(format!("{}/health", base.trim_end_matches('/'))).send().await {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+/// POST one utterance (WAV) to the server's /v1/audio/transcriptions and return
+/// the transcript text.
+async fn post_transcribe(base: &str, wav: Vec<u8>) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let part = reqwest::multipart::Part::bytes(wav)
+        .file_name("a.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("response_format", "json")
+        .text("language", "en");
+    let resp = client
+        .post(format!("{}/v1/audio/transcriptions", base.trim_end_matches('/')))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(v["text"].as_str().unwrap_or("").trim().to_string())
+}
+
+/// On-device transcription-SERVER engine (primary when a server is up): capture
+/// audio locally but send each utterance to a fast local OpenAI-compatible ASR
+/// server (Parakeet-TDT via achetronic/parakeet on :5092). Robert only captures
+/// + POSTs; the heavy single-pass decode runs in that server — fast enough to
+/// keep up even on a throttled CPU where whisper can't. Returns Err if the server
+/// isn't reachable (so the caller falls back to the local engines).
+fn run_engine_server(app: &AppHandle, stop: &Arc<AtomicBool>, base: &str) -> Result<(), String> {
+    if !tauri::async_runtime::block_on(server_health(base)) {
+        return Err(format!("no transcription server at {base}"));
+    }
+    let (captured, source_rate, cap_handle) = spawn_capture(app, stop)?;
+    let mut resampler = Resampler::new(source_rate, TARGET_RATE as f64);
+    emit_line(
+        app,
+        serde_json::json!({"type":"status","stage":"ready","target":"system.audio","engine":"server"}),
+    );
+
+    let check_ms: u64 = 120;
+    let silence_ms_limit: u64 = 800;
+    let partial_step = (1.5 * TARGET_RATE as f32) as usize; // ~1.5s of new speech
+    let max_utter = 30 * TARGET_RATE; // cap a turn at 30s
+    let mut utter: Vec<f32> = Vec::new();
+    let mut energies: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
+    let mut had_speech = false;
+    let mut silent_ms: u64 = 0;
+    let mut last_post_len: usize = 0;
+    let mut shown = String::new();
+
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(check_ms));
+        let raw: Vec<f32> = {
+            let mut g = captured.lock().unwrap();
+            std::mem::take(&mut *g)
+        };
+        if raw.is_empty() {
+            if had_speech {
+                silent_ms += check_ms;
+            }
+        } else {
+            let fresh = resampler.process(&raw);
+            if !fresh.is_empty() {
+                let avg: f32 = fresh.iter().map(|x| x.abs()).sum::<f32>() / fresh.len() as f32;
+                energies.push_back(avg);
+                if energies.len() > 20 {
+                    energies.pop_front();
+                }
+                let floor = energies.iter().cloned().fold(f32::INFINITY, f32::min).max(1e-4);
+                let voice = avg > 0.004 || (avg > 0.0015 && avg > floor * 2.0);
+                if had_speech || voice {
+                    utter.extend_from_slice(&fresh);
+                    if utter.len() > max_utter {
+                        let cut = utter.len() - max_utter;
+                        utter.drain(..cut);
+                    }
+                }
+                if voice {
+                    had_speech = true;
+                    silent_ms = 0;
+                    if utter.len().saturating_sub(last_post_len) > partial_step {
+                        last_post_len = utter.len();
+                        let wav = pcm16_wav_16k(&utter);
+                        if let Ok(text) = tauri::async_runtime::block_on(post_transcribe(base, wav)) {
+                            if !text.is_empty() && text != shown {
+                                shown = text.clone();
+                                emit_line(app, serde_json::json!({"type":"partial","text":text}));
+                            }
+                        }
+                    }
+                } else if had_speech {
+                    silent_ms += check_ms;
+                }
+            }
+        }
+        if had_speech && silent_ms >= silence_ms_limit {
+            if !utter.is_empty() {
+                let wav = pcm16_wav_16k(&utter);
+                if let Ok(text) = tauri::async_runtime::block_on(post_transcribe(base, wav)) {
+                    if !text.is_empty() {
+                        emit_line(app, serde_json::json!({"type":"final","text":text}));
+                    }
+                }
+            }
+            had_speech = false;
+            silent_ms = 0;
+            last_post_len = 0;
+            shown.clear();
+            utter.clear();
+        }
+    }
+    let _ = cap_handle.join();
+    let _ = app.emit("robert://terminated", Option::<i32>::None);
+    Ok(())
+}
+
+/// Entry point. Preference order: (1) a local OpenAI-compatible transcription
+/// server if one is up (Parakeet-TDT — offloads the heavy decode, fast even on a
+/// throttled CPU), (2) the streaming sherpa-onnx engine, (3) the whisper.cpp
+/// engine. ROBERT_STT=whisper|sherpa forces one; ROBERT_STT_URL overrides the
+/// server URL (default http://127.0.0.1:5092). Same events either way.
 pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
-    let force_whisper = std::env::var("ROBERT_STT")
-        .map(|v| v.eq_ignore_ascii_case("whisper"))
-        .unwrap_or(false);
-    if !force_whisper {
+    let mode = std::env::var("ROBERT_STT").unwrap_or_default().to_ascii_lowercase();
+
+    if mode == "whisper" {
+        return run_engine_whisper(app, stop);
+    }
+
+    // Auto-detect a local transcription server unless the user forced a local engine.
+    if mode != "sherpa" {
+        let url = std::env::var("ROBERT_STT_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:5092".into());
+        if tauri::async_runtime::block_on(server_health(&url)) {
+            emit_line(
+                &app,
+                serde_json::json!({"type":"status","stage":"loading_model","note":format!("using transcription server at {url}")}),
+            );
+            match run_engine_server(&app, &stop, &url) {
+                Ok(()) => return,
+                Err(e) => {
+                    emit_line(
+                        &app,
+                        serde_json::json!({"type":"status","stage":"loading_model","note":format!("transcription server error ({e}); using local engine")}),
+                    );
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    if mode != "whisper" {
         match run_engine_sherpa(&app, &stop) {
-            Ok(()) => return, // ran to a clean stop
+            Ok(()) => return,
             Err(e) => {
-                // Init failure only (the loop itself never returns Err) — tell the
-                // UI we're using the fallback and continue with whisper.
                 emit_line(
                     &app,
                     serde_json::json!({"type": "status", "stage": "loading_model", "note": format!("streaming engine unavailable ({e}); using whisper")}),
