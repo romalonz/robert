@@ -619,6 +619,34 @@ export default function Robert() {
         )}
       </div>
 
+      {/* Type a question → answered by the selected brain, no audio needed.
+          This is how you reach a cloud brain (and confirm a key works) on a PC
+          where only system audio is captured. */}
+      <form
+        className="flex items-center gap-2 px-4 pt-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const el = (e.currentTarget.elements.namedItem("ask") as HTMLInputElement) || null;
+          if (el && el.value.trim()) {
+            r.askManual(el.value);
+            el.value = "";
+          }
+        }}
+      >
+        <input
+          name="ask"
+          placeholder="Ask Robert anything (type a question, press Enter)…"
+          className="h-7 flex-1 bg-neutral-900/60 border border-neutral-700 rounded px-2 text-xs text-neutral-100 outline-none focus:border-neutral-500 placeholder:text-neutral-600"
+        />
+        <button
+          type="submit"
+          disabled={r.suggesting}
+          className="h-7 px-3 text-[11px] font-medium rounded-md bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
+        >
+          Ask
+        </button>
+      </form>
+
       {/* The answer fills the bar */}
       <div ref={answerRef} className="px-4 py-3">
         <div className="flex items-center justify-between mb-1">
