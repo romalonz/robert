@@ -333,6 +333,13 @@ export default function Robert() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apps, targetInList]);
 
+  // Load the system output devices so the user can pick the one their meeting
+  // actually plays through (Windows loopback).
+  useEffect(() => {
+    r.refreshOutputDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // This window only: glassy (transparent body) and restore the cursor the app
   // otherwise hides globally via --cursor-type.
   useEffect(() => {
@@ -774,6 +781,34 @@ export default function Robert() {
             auto-start
           </label>
         </Section>
+
+        {r.outputDevices.length > 0 && (
+          <Section
+            title="Output device"
+            hint="Robert captures the loopback of ONE speaker/headphone output. Pick the one your meeting audio actually plays through — the default is often wrong when several outputs are active or a virtual device (like Krisp) is in play, and Robert then records silence."
+          >
+            <SelectField
+              openKey="outdev" openPicker={openPicker} setOpenPicker={setOpenPicker}
+              tip="Which output device Robert listens to. Choose where your meeting plays; 'Windows default' follows the system default."
+              className={FIELD + " flex-1 min-w-[180px]"}
+              value={r.outputDevice || "__default"}
+              onChange={(v) => r.setOutputDevice(v === "__default" ? "" : v)}
+              options={[
+                { value: "__default", label: "Windows default" },
+                ...r.outputDevices.map((d) => ({
+                  value: d.id,
+                  label: d.name + (d.is_default ? " · default" : ""),
+                })),
+              ]}
+            />
+            <button onClick={r.refreshOutputDevices} className={BTN} title="Refresh output devices">
+              ↻
+            </button>
+            {r.running && (
+              <span className="text-[10px] text-amber-400">restart listening to apply</span>
+            )}
+          </Section>
+        )}
 
         <Section
           title="Brain"

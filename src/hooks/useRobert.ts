@@ -447,6 +447,24 @@ export const useRobert = () => {
   // PCs to a cloud brain — a local model that doesn't fit pages to disk and
   // slows the whole system. 0 = unknown/not yet read.
   const [localRamGb, setLocalRamGb] = useState<number>(0);
+  // Windows only: which system-output device Robert captures (loopback). "" =
+  // the Windows default, which is often the WRONG endpoint when several outputs
+  // are active or a virtual device (Krisp) is in play — so let the user pick the
+  // speaker the meeting actually plays through.
+  const [outputDevice, setOutputDevice] = useState<string>(
+    () => localStorage.getItem("robert.outputDevice") || ""
+  );
+  const outputDeviceRef = useRef(outputDevice);
+  outputDeviceRef.current = outputDevice;
+  useEffect(() => localStorage.setItem("robert.outputDevice", outputDevice), [outputDevice]);
+  const [outputDevices, setOutputDevices] = useState<
+    { id: string; name: string; is_default: boolean }[]
+  >([]);
+  const refreshOutputDevices = useCallback(() => {
+    invoke<{ id: string; name: string; is_default: boolean }[]>("get_output_devices")
+      .then((d) => setOutputDevices(Array.isArray(d) ? d : []))
+      .catch(() => setOutputDevices([]));
+  }, []);
   // Consent gate: nothing is installed/downloaded until the user says Continue.
   const [setupConsent, setSetupConsent] = useState<boolean>(false);
   const [pendingSetup, setPendingSetup] = useState<null | "brain" | "vision">(null);
@@ -1338,6 +1356,8 @@ export const useRobert = () => {
           targetPid: opts?.pid ?? null,
           modelFolder: null,
           silenceMs: 900,
+          // Windows: which output device's loopback to capture (null = default).
+          outputDevice: outputDeviceRef.current || null,
         });
         setRunning(true);
         track("meeting_start", { provider: providerRef.current, mode: modeRef.current });
@@ -2054,6 +2074,10 @@ export const useRobert = () => {
     refreshInbox,
     localStatus,
     localRamGb,
+    outputDevice,
+    setOutputDevice,
+    outputDevices,
+    refreshOutputDevices,
     localSetup,
     refreshLocalStatus,
     setupLocalBrain,

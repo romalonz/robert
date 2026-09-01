@@ -122,14 +122,22 @@ impl Resampler {
 fn spawn_capture(
     app: &AppHandle,
     stop: &Arc<AtomicBool>,
+    device: Option<String>,
 ) -> Result<(Arc<std::sync::Mutex<Vec<f32>>>, f64, std::thread::JoinHandle<()>), String> {
-    let input = SpeakerInput::new().map_err(|e| format!("system audio capture failed: {e}"))?;
+    // Capture the chosen output device's loopback (None = the Windows default).
+    // The default is often the WRONG endpoint on machines with several active
+    // outputs or a virtual device (Krisp), so letting the user pick the speaker
+    // the meeting actually plays through is what stops "records silence while you
+    // can hear audio".
+    let input = SpeakerInput::new_with_device(device.clone())
+        .map_err(|e| format!("system audio capture failed: {e}"))?;
     let mut stream = input.stream();
     let source_rate = stream.sample_rate().max(8000) as f64;
     let captured: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured2 = captured.clone();
     let stop2 = stop.clone();
     let app2 = app.clone();
+    let dev = device;
     let handle = std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
             let mut chunk: Vec<f32> = Vec::with_capacity(1024);
@@ -162,7 +170,7 @@ fn spawn_capture(
                             );
                         }
                         std::thread::sleep(std::time::Duration::from_millis(400));
-                        if let Ok(inp) = SpeakerInput::new() {
+                        if let Ok(inp) = SpeakerInput::new_with_device(dev.clone()) {
                             stream = inp.stream();
                         }
                     }
@@ -220,7 +228,7 @@ fn transcribe(
 /// detected endpoint (built-in rule-based trailing-silence). Returns Err ONLY if
 /// the model can't be loaded (so the caller falls back to whisper); a clean stop
 /// returns Ok. ONNX Runtime does runtime CPU dispatch, so this is safe on any CPU.
-fn run_engine_sherpa(app: &AppHandle, stop: &Arc<AtomicBool>) -> Result<(), String> {
+fn run_engine_sherpa(app: &AppHandle, stop: &Arc<AtomicBool>, device: Option<String>) -> Result<(), String> {
     use sherpa_transducers::asr::Model;
 
     emit_line(
@@ -247,7 +255,7 @@ fn run_engine_sherpa(app: &AppHandle, stop: &Arc<AtomicBool>) -> Result<(), Stri
     let mut asr = model.online_stream().map_err(|e| format!("stream: {e}"))?;
 
     // WASAPI system-audio loopback (auto-reconnecting) — shared capture path.
-    let (captured, source_rate_f, cap_handle) = spawn_capture(app, stop)?;
+    let (captured, source_rate_f, cap_handle) = spawn_capture(app, stop, device)?;
     let source_rate = source_rate_f as usize;
 
     emit_line(
@@ -361,11 +369,11 @@ async fn post_transcribe(base: &str, wav: Vec<u8>) -> Result<String, String> {
 /// + POSTs; the heavy single-pass decode runs in that server — fast enough to
 /// keep up even on a throttled CPU where whisper can't. Returns Err if the server
 /// isn't reachable (so the caller falls back to the local engines).
-fn run_engine_server(app: &AppHandle, stop: &Arc<AtomicBool>, base: &str) -> Result<(), String> {
+fn run_engine_server(app: &AppHandle, stop: &Arc<AtomicBool>, base: &str, device: Option<String>) -> Result<(), String> {
     if !tauri::async_runtime::block_on(server_health(base)) {
         return Err(format!("no transcription server at {base}"));
     }
-    let (captured, source_rate, cap_handle) = spawn_capture(app, stop)?;
+    let (captured, source_rate, cap_handle) = spawn_capture(app, stop, device)?;
     let mut resampler = Resampler::new(source_rate, TARGET_RATE as f64);
     emit_line(
         app,
@@ -454,11 +462,11 @@ fn run_engine_server(app: &AppHandle, stop: &Arc<AtomicBool>, base: &str) -> Res
 /// throttled CPU), (2) the streaming sherpa-onnx engine, (3) the whisper.cpp
 /// engine. ROBERT_STT=whisper|sherpa forces one; ROBERT_STT_URL overrides the
 /// server URL (default http://127.0.0.1:5092). Same events either way.
-pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
+pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>, device: Option<String>) {
     let mode = std::env::var("ROBERT_STT").unwrap_or_default().to_ascii_lowercase();
 
     if mode == "whisper" {
-        return run_engine_whisper(app, stop);
+        return run_engine_whisper(app, stop, device);
     }
 
     // Auto-detect a local transcription server unless the user forced a local engine.
@@ -470,7 +478,7 @@ pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
                 &app,
                 serde_json::json!({"type":"status","stage":"loading_model","note":format!("using transcription server at {url}")}),
             );
-            match run_engine_server(&app, &stop, &url) {
+            match run_engine_server(&app, &stop, &url, device.clone()) {
                 Ok(()) => return,
                 Err(e) => {
                     emit_line(
@@ -486,7 +494,7 @@ pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
     }
 
     if mode != "whisper" {
-        match run_engine_sherpa(&app, &stop) {
+        match run_engine_sherpa(&app, &stop, device.clone()) {
             Ok(()) => return,
             Err(e) => {
                 emit_line(
@@ -499,12 +507,12 @@ pub fn run_engine(app: AppHandle, stop: Arc<AtomicBool>) {
             }
         }
     }
-    run_engine_whisper(app, stop);
+    run_engine_whisper(app, stop, device);
 }
 
 /// The whisper.cpp engine (fallback): capture -> resample -> VAD -> end-of-turn.
 /// Runs on its own thread until `stop` is set.
-fn run_engine_whisper(app: AppHandle, stop: Arc<AtomicBool>) {
+fn run_engine_whisper(app: AppHandle, stop: Arc<AtomicBool>, device: Option<String>) {
     emit_line(&app, serde_json::json!({"type": "status", "stage": "loading_model"}));
 
     let model_path = match ensure_model(&app) {
@@ -524,7 +532,7 @@ fn run_engine_whisper(app: AppHandle, stop: Arc<AtomicBool>) {
     };
 
     // WASAPI system-audio loopback (auto-reconnecting) — shared capture path.
-    let (captured, source_rate, cap_handle) = match spawn_capture(&app, &stop) {
+    let (captured, source_rate, cap_handle) = match spawn_capture(&app, &stop, device) {
         Ok(t) => t,
         Err(e) => return emit_error(&app, &e),
     };

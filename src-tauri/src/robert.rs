@@ -78,6 +78,7 @@ pub async fn robert_start(
     target_pid: Option<i64>,
     model_folder: Option<String>,
     silence_ms: Option<i64>,
+    output_device: Option<String>,
 ) -> Result<(), String> {
     kill_existing(&state);
 
@@ -89,12 +90,14 @@ pub async fn robert_start(
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         *state.win_stop.lock().unwrap() = Some(stop.clone());
         let app2 = app.clone();
-        std::thread::spawn(move || crate::robert_win::run_engine(app2, stop));
+        // output_device = the loopback endpoint the user chose (None = default).
+        std::thread::spawn(move || crate::robert_win::run_engine(app2, stop, output_device));
         return Ok(());
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+    let _ = output_device; // macOS/Linux select capture via the sidecar/args
     let mut args: Vec<String> = Vec::new();
     if let Some(pid) = target_pid {
         args.push("--pid".into());
