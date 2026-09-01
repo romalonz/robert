@@ -793,7 +793,7 @@ export default function Robert() {
                 value={r.localModel}
                 onChange={(e) => r.setLocalModel(e.target.value)}
                 placeholder="gemma4:12b"
-                title="Ollama model. Picked for your RAM on first run: gemma4:12b with 16 GB or more, gemma4:e4b below."
+                title="Ollama model. gemma4:12b is picked for you on first run; on a low-RAM PC it runs but is slow — a cloud brain (your own key) is much faster there."
                 className={FIELD + " w-[130px]"}
               />
               {r.localStatus === null ? (
@@ -814,7 +814,7 @@ export default function Robert() {
                       Cancel
                     </button>
                   ) : (
-                    <button onClick={() => r.requestSetup("brain")} className={BTN} title="Installs Ollama if needed and downloads the model (7.5 GB for gemma4:12b, 3 GB for gemma4:e4b)">
+                    <button onClick={() => r.requestSetup("brain")} className={BTN} title="Installs Ollama if needed and downloads the model (gemma4:12b, about 7 GB)">
                       Set up
                     </button>
                   )}

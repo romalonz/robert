@@ -1496,6 +1496,7 @@ export const useRobert = () => {
       convertingRef.current = true;
       setConverting(file);
       let madeProfile = false;
+      let brainDown = false;
       try {
         setConvertStatus(`Reading ${file}…`);
         const ex = await invoke<{ file: string; kind: string; chars: number; truncated: boolean; text: string }>(
@@ -1508,7 +1509,7 @@ export const useRobert = () => {
         const brainName = providerRef.current === "local" ? `local ${localModelRef.current}` : providerRef.current;
         setConvertStatus(
           `Rewriting ${file} into Robert's format with the ${brainName} brain${
-            providerRef.current === "local" ? " (a minute or two)" : ""
+            providerRef.current === "local" ? " (up to a few minutes on a local brain — longer on a low-RAM PC)" : ""
           }…`
         );
         const user =
@@ -1516,8 +1517,26 @@ export const useRobert = () => {
           `SOURCE:\n${ex.text}\n\n` +
           (profile ? `PROFILE (my experience, use it to map requirements):\n${profile}\n\n` : "PROFILE: none given.\n\n") +
           `Write the Markdown file now.`;
-        let out = (await brainCall(CONVERT_SYSTEM, user, 4200)).trim();
-        out = out.replace(/^```(?:markdown|md)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+        let out: string;
+        try {
+          out = (await brainCall(CONVERT_SYSTEM, user, 4200)).trim();
+          out = out.replace(/^```(?:markdown|md)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+          if (!out) throw new Error("empty response from the brain");
+        } catch {
+          // The brain was unreachable, too slow, or timed out. NEVER throw away
+          // the text we already extracted deterministically in Rust — write it as
+          // a usable file so the résumé/document is captured (grounding and
+          // retrieval work fine on raw text), and the polished rewrite can run
+          // later once the brain is healthy. This is what turns a brain outage
+          // from a total dead end into a minor "we'll tidy it up later".
+          brainDown = true;
+          const looksResume = /resume|cv|curriculum|profile/i.test(file);
+          out =
+            (looksResume && !profile
+              ? `# Profile\n\n_Captured from ${file}. Robert will rewrite this into its format once the local brain is ready (or switch to a cloud brain in settings)._\n\n`
+              : `# ${file.replace(/\.[^.]+$/, "")}\n\n_Captured from ${file}. Robert will rewrite this into its format once the brain is ready._\n\n`) +
+            ex.text.trim();
+        }
         if (!out.startsWith("#")) out = `# ${file.replace(/\.[^.]+$/, "")}\n\n${out}`;
         const title = (out.split("\n")[0] || "").replace(/^#+\s*/, "");
         const slug = title
@@ -1549,13 +1568,17 @@ export const useRobert = () => {
         if (isProfile) {
           madeProfile = true;
           setConvertStatus(
-            `Saved your résumé as profile.md. Every job description you add is now mapped against it.`
+            brainDown
+              ? `Saved your résumé as profile.md (raw text — the brain wasn't ready to polish it). It already works for meetings; set up a brain, then re-add the résumé to refine it.`
+              : `Saved your résumé as profile.md. Every job description you add is now mapped against it.`
           );
         } else {
           setNotesFile(name);
           notesFileRef.current = name;
           setConvertStatus(
-            opts.replaces
+            brainDown
+              ? `Saved ${name} as raw text (the brain wasn't ready to polish it) and selected it as the meeting knowledge. Re-add it later to refine.`
+              : opts.replaces
               ? `Rebuilt ${name} against your profile.`
               : `Added ${name} and selected it as the meeting knowledge${
                   profile ? " (mapped against profile.md)" : ""
@@ -1571,8 +1594,10 @@ export const useRobert = () => {
         refreshInbox();
       }
       // A new profile: rebuild every knowledge file that was converted
-      // without one, so each of them references the résumé too.
-      if (madeProfile) {
+      // without one, so each of them references the résumé too. Skip when the
+      // brain is down — there is nothing to rewrite with, and each attempt would
+      // just wait out the timeout again.
+      if (madeProfile && !brainDown) {
         try {
           const stale = await invoke<[string, string][]>("robert_list_unprofiled", {
             notesFolder: notesFolderRef.current,

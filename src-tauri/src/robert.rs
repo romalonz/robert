@@ -346,8 +346,15 @@ async fn ollama_chat(
             "temperature": 0.6
         }
     });
+    // Scale the ceiling with how much we asked the model to WRITE. A live-call
+    // suggestion (a few hundred tokens) still fails fast if the server is wedged,
+    // but a big conversion (résumé → profile, ~4k tokens) on a RAM-starved box
+    // generating at only a few tokens/sec is no longer guillotined mid-answer.
+    // ~0.3s/token ≈ a 3 t/s worst case, plus a base for prompt processing; capped
+    // so nothing can hang indefinitely.
+    let timeout_secs = (180 + num_predict * 3 / 10).min(1500);
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(240))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| e.to_string())?;
     for attempt in 0..3 {

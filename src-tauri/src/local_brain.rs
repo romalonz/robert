@@ -57,20 +57,28 @@ fn total_ram_bytes() -> Option<u64> {
     None
 }
 
-/// Pick the model this machine can actually run well. gemma4:12b needs about
-/// 9 GB of memory while answering; below 16 GB of RAM the e4b build keeps the
-/// same voice at a quarter of the footprint.
+/// Pick the model this machine can actually run. gemma4:12b is BOTH the smallest
+/// (~7 GB) and the most capable of the local builds — the older e4b tag is
+/// actually a *larger* download (~9 GB) and was being handed to the weakest
+/// machines by mistake, which made them page continuously (single-digit t/s). So
+/// 12b is the right local pick at every RAM tier; below ~9 GB it still pages and
+/// runs slowly, so we say so and steer toward a cloud brain, which is far faster
+/// there.
 #[tauri::command]
 pub fn robert_local_recommend() -> Recommendation {
     let bytes = total_ram_bytes().unwrap_or(0);
     let gb = bytes as f64 / 1_073_741_824.0;
     if bytes == 0 {
-        return Recommendation { ram_gb: 0.0, model: "gemma4:12b".into(), why: "RAM unknown; default".into() };
+        return Recommendation { ram_gb: 0.0, model: "gemma4:12b".into(), why: "RAM unknown; default gemma4:12b".into() };
     }
-    if gb >= 15.0 {
-        Recommendation { ram_gb: gb, model: "gemma4:12b".into(), why: format!("{gb:.0} GB RAM: full 12b model") }
+    if gb >= 9.0 {
+        Recommendation { ram_gb: gb, model: "gemma4:12b".into(), why: format!("{gb:.0} GB RAM: gemma4:12b runs well") }
     } else {
-        Recommendation { ram_gb: gb, model: "gemma4:e4b".into(), why: format!("{gb:.0} GB RAM: lighter e4b model") }
+        Recommendation {
+            ram_gb: gb,
+            model: "gemma4:12b".into(),
+            why: format!("{gb:.0} GB RAM is tight for any local model — gemma4:12b works but is slow; a cloud brain (your own key) will be much faster"),
+        }
     }
 }
 
