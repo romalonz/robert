@@ -81,6 +81,104 @@ fn base_url() -> String {
     std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into())
 }
 
+/// The address every Ollama process Robert spawns must use. OLLAMA_HOST is
+/// overloaded: `ollama serve` reads it as the address to BIND, while the CLI and
+/// other clients read it as the address to CONNECT to. A leftover value from a
+/// prior remote setup (e.g. a Tailscale address) is therefore doubly fatal — the
+/// local server can't bind an IP that isn't this machine's (it exits on loop and
+/// the tray app respawns it forever), and `ollama pull` would send the download
+/// to that dead remote instead of localhost. We pin it to the IPv4 loopback.
+const OLLAMA_LOCAL: &str = "127.0.0.1:11434";
+
+fn is_local_host(h: &str) -> bool {
+    let h = h.trim();
+    h.is_empty()
+        || h.starts_with(':')
+        || h.starts_with("127.")
+        || h.starts_with("localhost")
+        || h.starts_with("0.0.0.0")
+        || h.starts_with("::1")
+        || h.starts_with("[::1]")
+}
+
+/// Make sure Robert's local-brain setup always talks to a LOCAL Ollama, no
+/// matter what stale OLLAMA_HOST is lying around. Overrides it for this process
+/// (so every child — `ollama serve`, `ollama pull` — inherits the correct value)
+/// and, on Windows, deletes a non-local value persisted in the user environment
+/// so the Ollama tray app stops its endless failed-bind respawn loop.
+fn force_local_ollama(app: &AppHandle) {
+    if let Ok(prev) = std::env::var("OLLAMA_HOST") {
+        if !is_local_host(&prev) {
+            emit(
+                app,
+                "start",
+                &format!("Ignoring OLLAMA_HOST={prev} (points off this PC) — using local Ollama"),
+                0,
+                0,
+            );
+        }
+    }
+    std::env::set_var("OLLAMA_HOST", OLLAMA_LOCAL);
+    #[cfg(target_os = "windows")]
+    clear_persisted_ollama_host();
+}
+
+/// Windows only: if the user-scope OLLAMA_HOST is set to a non-local address,
+/// remove it so it stops poisoning every future Ollama start. We never touch a
+/// deliberate local value.
+#[cfg(target_os = "windows")]
+fn clear_persisted_ollama_host() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("reg")
+        .args(["query", "HKCU\\Environment", "/v", "OLLAMA_HOST"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    if let Ok(out) = out {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let val = text
+                .lines()
+                .find(|l| l.contains("OLLAMA_HOST"))
+                .and_then(|l| l.split_whitespace().last())
+                .unwrap_or("");
+            if !val.is_empty() && !is_local_host(val) {
+                let _ = std::process::Command::new("reg")
+                    .args(["delete", "HKCU\\Environment", "/v", "OLLAMA_HOST", "/f"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .status();
+            }
+        }
+    }
+}
+
+/// Windows only: turn the opaque "server did not start" timeout into an
+/// actionable message when Ollama's own log shows it was actually a bind
+/// failure (the classic leftover-OLLAMA_HOST symptom).
+#[cfg(target_os = "windows")]
+fn ollama_server_log_hint() -> Option<String> {
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+    let log = PathBuf::from(local).join("Ollama").join("server.log");
+    let text = std::fs::read_to_string(&log).ok()?;
+    let tail = text
+        .lines()
+        .rev()
+        .take(40)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
+    if tail.contains("bind") || tail.contains("requested address") || tail.contains("not valid") {
+        Some(
+            "Ollama's server keeps failing to bind its address — usually a leftover OLLAMA_HOST \
+             pointing at another machine. Robert has reset it to local; please quit Ollama from \
+             the system tray (or restart your PC) and click Set up local brain again."
+                .into(),
+        )
+    } else {
+        None
+    }
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct LocalStatus {
     pub installed: bool,
@@ -306,18 +404,18 @@ async fn start_ollama(app: &AppHandle) -> Result<(), String> {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             if let Some(bin) = ollama_binary() {
-                let _ = std::process::Command::new(bin).arg("serve").creation_flags(CREATE_NO_WINDOW).spawn();
+                let _ = std::process::Command::new(bin).arg("serve").env("OLLAMA_HOST", OLLAMA_LOCAL).creation_flags(CREATE_NO_WINDOW).spawn();
             } else if let Ok(local) = std::env::var("LOCALAPPDATA") {
                 let app = PathBuf::from(&local).join("Programs").join("Ollama").join("ollama app.exe");
                 if app.exists() {
-                    let _ = std::process::Command::new(app).creation_flags(CREATE_NO_WINDOW).spawn();
+                    let _ = std::process::Command::new(app).env("OLLAMA_HOST", OLLAMA_LOCAL).creation_flags(CREATE_NO_WINDOW).spawn();
                 }
             }
         }
         #[cfg(target_os = "linux")]
         {
             if let Some(bin) = ollama_binary() {
-                let _ = std::process::Command::new(bin).arg("serve").spawn();
+                let _ = std::process::Command::new(bin).arg("serve").env("OLLAMA_HOST", OLLAMA_LOCAL).spawn();
             }
         }
     }
@@ -343,6 +441,10 @@ async fn start_ollama(app: &AppHandle) -> Result<(), String> {
         emit(app, "start", &format!("Starting Ollama… ({}s)", secs), 0, 0);
         cancelled()?;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(hint) = ollama_server_log_hint() {
+        return Err(hint);
     }
     Err("Ollama is installed but its local server did not start. Open the Ollama app once from the Start menu (or restart your PC), then click Set up local brain again. You can also use a cloud brain with your own key.".into())
 }
@@ -490,6 +592,7 @@ async fn pull_via_cli(app: &AppHandle, model: &str) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(&bin);
     cmd.arg("pull")
         .arg(model)
+        .env("OLLAMA_HOST", OLLAMA_LOCAL)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -661,6 +764,10 @@ async fn pull_via_http(app: &AppHandle, model: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalStatus, String> {
     CANCEL.store(false, Ordering::Relaxed);
+    // Before anything else: guarantee we drive a LOCAL Ollama. A stale OLLAMA_HOST
+    // pointing off this machine otherwise makes the server exit-loop on bind and
+    // sends `ollama pull` to the wrong host — the download never even starts.
+    force_local_ollama(&app);
     route_models_to_robert_folder();
     let result: Result<(), String> = async {
         if list_models().await.is_none() {
