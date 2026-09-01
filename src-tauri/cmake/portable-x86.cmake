@@ -18,3 +18,8 @@
 # makes that option() a no-op so the value sticks. It touches nothing else, so it is
 # inert for any other CMake dependency in the build graph.
 set(GGML_NATIVE OFF CACHE BOOL "portable build: no -march=native (avoids AVX-512)" FORCE)
+
+# Match the static C runtime (/MT) that sherpa-onnx's prebuilt static libs use, so
+# whisper.cpp's cmake build doesn't collide with them on the CRT (LNK2038/2005).
+# Paired with RUSTFLAGS=-C target-feature=+crt-static in the workflow.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded" CACHE STRING "static CRT to match sherpa-onnx" FORCE)
