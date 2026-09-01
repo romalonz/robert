@@ -274,50 +274,74 @@ pub async fn robert_local_status(model: String) -> Result<LocalStatus, String> {
     })
 }
 
-async fn start_ollama() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut opened = false;
-        for p in ["/Applications/Ollama.app".to_string(), format!("{}/Applications/Ollama.app", std::env::var("HOME").unwrap_or_default())] {
-            if std::path::Path::new(&p).exists() {
-                let _ = std::process::Command::new("open").arg(&p).spawn();
-                opened = true;
-                break;
+async fn start_ollama(app: &AppHandle) -> Result<(), String> {
+    // Already reachable? (the installer often starts the server itself.)
+    if list_models().await.is_some() {
+        return Ok(());
+    }
+
+    // Kick off the server. On Windows the headless `ollama serve` is far more
+    // reliable than the GUI tray app for coming up unattended; it inherits our
+    // env (OLLAMA_MODELS) too. macOS opens the app; Linux runs serve.
+    fn spawn_server() {
+        #[cfg(target_os = "macos")]
+        {
+            let mut opened = false;
+            for p in ["/Applications/Ollama.app".to_string(), format!("{}/Applications/Ollama.app", std::env::var("HOME").unwrap_or_default())] {
+                if std::path::Path::new(&p).exists() {
+                    let _ = std::process::Command::new("open").arg(&p).spawn();
+                    opened = true;
+                    break;
+                }
+            }
+            if !opened {
+                let _ = std::process::Command::new("open").args(["-a", "Ollama"]).spawn();
             }
         }
-        if !opened {
-            let _ = std::process::Command::new("open").args(["-a", "Ollama"]).spawn();
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // the tray app starts the server; fall back to `ollama serve`
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            let app = PathBuf::from(&local).join("Programs").join("Ollama").join("ollama app.exe");
-            if app.exists() {
-                let _ = std::process::Command::new(app).creation_flags(CREATE_NO_WINDOW).spawn();
-            } else if let Some(bin) = ollama_binary() {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            if let Some(bin) = ollama_binary() {
                 let _ = std::process::Command::new(bin).arg("serve").creation_flags(CREATE_NO_WINDOW).spawn();
+            } else if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                let app = PathBuf::from(&local).join("Programs").join("Ollama").join("ollama app.exe");
+                if app.exists() {
+                    let _ = std::process::Command::new(app).creation_flags(CREATE_NO_WINDOW).spawn();
+                }
             }
-        } else if let Some(bin) = ollama_binary() {
-            let _ = std::process::Command::new(bin).arg("serve").creation_flags(CREATE_NO_WINDOW).spawn();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(bin) = ollama_binary() {
+                let _ = std::process::Command::new(bin).arg("serve").spawn();
+            }
         }
     }
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(bin) = ollama_binary() {
-            let _ = std::process::Command::new(bin).arg("serve").spawn();
-        }
-    }
-    for _ in 0..60 {
+
+    spawn_server();
+
+    // Poll up to 3 minutes (a fresh install can be slow to initialise), showing
+    // a live countdown so it never looks frozen, and re-spawn once if it stalls.
+    let start = std::time::Instant::now();
+    let mut respawned = false;
+    loop {
         if list_models().await.is_some() {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let secs = start.elapsed().as_secs();
+        if secs > 180 {
+            break;
+        }
+        if !respawned && secs >= 25 {
+            respawned = true;
+            spawn_server();
+        }
+        emit(app, "start", &format!("Starting Ollama… ({}s)", secs), 0, 0);
+        cancelled()?;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-    Err("Ollama did not start within 60 seconds".into())
+    Err("Ollama is installed but its local server did not start. Open the Ollama app once from the Start menu (or restart your PC), then click Set up local brain again. You can also use a cloud brain with your own key.".into())
 }
 
 async fn download(app: &AppHandle, url: &str, dest: &PathBuf, label: &str) -> Result<(), String> {
@@ -486,7 +510,7 @@ pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalSt
                 install_ollama(&app).await?;
             }
             emit(&app, "start", "Starting Ollama", 0, 0);
-            start_ollama().await?;
+            start_ollama(&app).await?;
         }
         let have = list_models().await.unwrap_or_default();
         if !have.iter().any(|m| model_matches(m, &model)) {
