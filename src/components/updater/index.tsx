@@ -1,285 +1,86 @@
 import { useState, useEffect } from "react";
-import {
-  Download,
-  RefreshCw,
-  CheckCircle,
-  AlertCircle,
-  ExternalLink,
-  Loader2,
-} from "lucide-react";
-import {
-  Button,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  ScrollArea,
-  Markdown,
-} from "@/components";
-import { check, Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { useWindowResize } from "@/hooks";
+import { Download, RefreshCw, ExternalLink } from "lucide-react";
+import { Button, Popover, PopoverContent, PopoverTrigger } from "@/components";
+import { check } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
 
-type UpdateState =
-  | "checking"
-  | "available"
-  | "downloading"
-  | "installing"
-  | "ready"
-  | "error"
-  | "uptodate"
-  | "failed";
-
-interface DownloadProgress {
-  downloaded: number;
-  contentLength: number;
-  percentage: number;
-}
-
+// The in-app control DETECTS an update (via the signed feed) but performs it only
+// by launching the visible PowerShell terminal updater — real, watchable steps
+// (download → close → install → relaunch). There is no silent in-app download.
 export const Updater = () => {
-  const [updateState, setUpdateState] = useState<UpdateState>("uptodate");
-  const [update, setUpdate] = useState<Update | null>(null);
-  const [progress, setProgress] = useState<DownloadProgress>({
-    downloaded: 0,
-    contentLength: 0,
-    percentage: 0,
-  });
+  const [available, setAvailable] = useState(false);
+  const [version, setVersion] = useState("");
+  const [launching, setLaunching] = useState(false);
+  const [open, setOpen] = useState(false);
 
-  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
-  const [manualClose, setManualClose] = useState(false);
-  const { resizeWindow } = useWindowResize();
-
-  const checkForUpdates = async () => {
-    try {
-      setUpdateState("checking");
-
-      const foundUpdate = await check();
-      if (foundUpdate) {
-        setUpdate(foundUpdate);
-        setUpdateState("available");
-      } else {
-        setUpdateState("uptodate");
-      }
-    } catch (err) {
-      console.error("Failed to check for updates:", err);
-      setUpdateState("error");
-      setIsPopoverOpen(false);
-    }
-  };
-
-  const downloadAndInstall = async () => {
-    if (!update) return;
-
-    try {
-      setUpdateState("downloading");
-      setProgress({ downloaded: 0, contentLength: 0, percentage: 0 });
-
-      await update.downloadAndInstall((event) => {
-        switch (event.event) {
-          case "Started":
-            setProgress((prev) => ({
-              ...prev,
-              contentLength: event.data.contentLength || 0,
-            }));
-            break;
-
-          case "Progress":
-            setProgress((prev) => {
-              const downloaded = prev.downloaded + event.data.chunkLength;
-              const percentage =
-                prev.contentLength > 0
-                  ? Math.round((downloaded / prev.contentLength) * 100)
-                  : 0;
-
-              return {
-                downloaded,
-                contentLength: prev.contentLength,
-                percentage,
-              };
-            });
-            break;
-
-          case "Finished":
-            setUpdateState("installing");
-            break;
-        }
-      });
-
-      setUpdateState("ready");
-
-      // Auto-relaunch after a short delay to show success state
-      setTimeout(async () => {
-        await relaunch();
-      }, 2000);
-    } catch (err) {
-      console.error("Failed to download/install update:", err);
-      setUpdateState("failed");
-      // Keep the popover open so user can try again
-      setIsPopoverOpen(true);
-    }
-  };
-
-  // Check for updates on component mount
   useEffect(() => {
-    checkForUpdates();
+    check()
+      .then((u) => {
+        if (u) {
+          setAvailable(true);
+          setVersion(u.version);
+        }
+      })
+      .catch(() => {
+        /* offline or no update — leave the control hidden */
+      });
   }, []);
 
-  // Handle window resizing when popover opens/closes
-  useEffect(() => {
-    resizeWindow(isPopoverOpen);
-  }, [isPopoverOpen, resizeWindow]);
+  if (!available) return null;
 
-  // Helper functions for button state
-  const getButtonContent = () => {
-    switch (updateState) {
-      case "downloading":
-        return (
-          <>
-            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-            Downloading... {progress.percentage}%
-          </>
-        );
-      case "installing":
-        return (
-          <>
-            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-            Installing...
-          </>
-        );
-      case "ready":
-        return (
-          <>
-            <CheckCircle className="mr-2 h-4 w-4" />
-            Ready - Restarting...
-          </>
-        );
-      case "error":
-        return (
-          <>
-            <AlertCircle className="mr-2 h-4 w-4" />
-            Try Again
-          </>
-        );
-      default:
-        return (
-          <>
-            <Download className="mr-2 h-4 w-4" />
-            Download & Install Update
-          </>
-        );
+  const launch = async () => {
+    setLaunching(true);
+    try {
+      // Opens a visible PowerShell window that runs update-robert.ps1.
+      await invoke("robert_terminal_update");
+    } catch {
+      /* any failure surfaces in the terminal window itself */
     }
   };
-
-  const getButtonDisabled = () => {
-    return ["downloading", "installing", "ready"].includes(updateState);
-  };
-
-  const getButtonOnClick = () => {
-    return updateState === "error" ? checkForUpdates : downloadAndInstall;
-  };
-
-  // Handle popover open/close with manual control
-  const handlePopoverOpenChange = (open: boolean) => {
-    // Prevent closing during active operations unless manually triggered
-    const isActiveOperation = ["downloading", "installing", "ready"].includes(
-      updateState
-    );
-
-    if (open) {
-      setIsPopoverOpen(true);
-      setManualClose(false);
-    } else if (!isActiveOperation || manualClose) {
-      setIsPopoverOpen(false);
-      setManualClose(false);
-    }
-  };
-
-  // Handle manual trigger click
-  const handleTriggerClick = () => {
-    setManualClose(!isPopoverOpen);
-    setIsPopoverOpen(!isPopoverOpen);
-  };
-
-  // Only show updater when there's an update available or during active operations
-  if (updateState === "uptodate" || updateState === "error") {
-    return null;
-  }
 
   return (
-    <Popover open={isPopoverOpen} onOpenChange={handlePopoverOpenChange}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           size="icon"
-          onClick={handleTriggerClick}
           className="cursor-pointer"
-          disabled={updateState === "checking"}
-          title={`Update available: ${update?.version}`}
-          aria-label={`Update available: ${update?.version}`}
+          title={`Update ${version} available`}
+          aria-label={`Update ${version} available`}
         >
-          {updateState === "checking" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
-          )}
+          <Download className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
-
       <PopoverContent
         align="end"
         side="bottom"
-        className="select-none w-screen p-0 border overflow-hidden border-input/50"
         sideOffset={8}
+        className="w-72 p-4 border border-input/50 select-none"
       >
-        <ScrollArea className="h-[calc(100vh-10rem)]">
-          <div className="p-6 space-y-4">
-            {/* Update Header */}
-            <div className="border-b border-input/50 pb-2">
-              <h1 className="text-lg font-bold bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
-                Update Available
-              </h1>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                A new version ({update?.version}) is available. Here's what's
-                new:
-              </p>
-            </div>
-
-            {/* Release Notes */}
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              {update?.body ? (
-                <Markdown>{update.body}</Markdown>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Release notes not available for this version.
-                </p>
-              )}
-            </div>
-          </div>
-        </ScrollArea>
-
-        {/* Fixed Download Section */}
-        <div className="border-t border-input/50 p-4 space-y-3">
-          <Button
-            onClick={getButtonOnClick()}
-            disabled={getButtonDisabled()}
-            className="w-full"
-            variant={updateState === "failed" ? "destructive" : "default"}
-          >
-            {getButtonContent()}
-          </Button>
-
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground">
-              Having trouble downloading?{" "}
-              <a
-                href={"https://pluely.com/downloads?ref=pluely-app"}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-700 underline inline-flex items-center gap-1"
-              >
-                Download manually
-                <ExternalLink className="h-3 w-3" />
-              </a>
+        <div className="space-y-3">
+          <div>
+            <h1 className="text-sm font-bold">Update available</h1>
+            <p className="text-xs text-neutral-400 mt-1 leading-snug">
+              Version {version} is ready. This opens a terminal window that
+              downloads and installs it with visible steps, then reopens Robert.
             </p>
           </div>
+          <Button
+            onClick={launch}
+            disabled={launching}
+            className="w-full cursor-pointer text-xs"
+          >
+            {launching ? (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                Opening terminal…
+              </>
+            ) : (
+              <>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Update in terminal
+              </>
+            )}
+          </Button>
         </div>
       </PopoverContent>
     </Popover>

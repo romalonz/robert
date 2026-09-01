@@ -128,6 +128,7 @@ pub fn run() {
             // (Windows uses the in-process engine in robert_win; same commands)
             robert::robert_start,
             robert::robert_stop,
+            robert::robert_terminal_update,
             robert::robert_suggest,
             robert::robert_suggest_anthropic,
             robert::robert_suggest_local,

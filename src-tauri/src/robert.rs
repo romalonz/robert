@@ -458,6 +458,34 @@ pub async fn robert_suggest_local(
     ollama_chat(&model, &system, &user, max_tokens.unwrap_or(320)).await
 }
 
+/// Launch the terminal updater: opens a VISIBLE PowerShell window that runs
+/// update-robert.ps1 (check latest → download signed installer → close Robert →
+/// install → relaunch), so the whole update is real, watchable actions. The
+/// in-app Update button calls this instead of doing a silent in-app install.
+#[tauri::command]
+pub fn robert_terminal_update() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        let ps = "$u='https://github.com/romalonz/robert/releases/download/v0.1.1/update-robert.ps1'; \
+                  $s=\"$env:TEMP\\update-robert.ps1\"; \
+                  try { Invoke-RestMethod $u -OutFile $s; & $s } \
+                  catch { Write-Host $_.Exception.Message -ForegroundColor Red }; \
+                  Read-Host 'Press Enter to close'";
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()
+            .map_err(|e| format!("could not open the updater terminal: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("the terminal updater is Windows-only".into())
+    }
+}
+
 /// Read an image from the clipboard as base64 PNG. Needs NO screen-recording
 /// permission (the OS screenshot tool captured it, not us) — the fallback for
 /// locked-down machines where live screen capture is blocked. Take a shot with

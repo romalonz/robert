@@ -1,4 +1,4 @@
-import { Card, DragButton, CustomCursor, Button } from "@/components";
+import { Card, Updater, DragButton, CustomCursor, Button } from "@/components";
 import {
   SystemAudio,
   Completion,
@@ -78,8 +78,9 @@ const App = () => {
             </Button>
           </div>
 
-          {/* In-app auto-updater removed — updates happen ONLY via the terminal
-              (PowerShell) updater. See dist-windows/update-robert.ps1. */}
+          {/* The in-app control detects updates but performs them ONLY by
+              launching the visible PowerShell terminal updater. */}
+          <Updater />
           <DragButton />
         </Card>
         {customizable.cursor.type === "invisible" && platform !== "linux" ? (
