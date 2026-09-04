@@ -170,6 +170,7 @@ pub fn run() {
             knowledge::robert_list_unprofiled,
             local_brain::robert_local_status,
             local_brain::robert_setup_local,
+            local_brain::robert_remove_model,
             local_brain::robert_local_cancel,
             local_brain::robert_local_recommend,
             local_brain::robert_models_location,

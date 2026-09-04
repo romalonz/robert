@@ -353,6 +353,13 @@ FORMAT for a TASK, PROCESS, or STEP-BY-STEP (anything that is "do this" or "how 
 
 If the image is unreadable or has no question or task, reply with one short line saying so. Be correct and specific over generic.`;
 
+// The default local brain, in ONE place (mirrors LOCAL_BRAIN in local_brain.rs).
+// A dense 4B: ~1/3 the size of the old gemma4:12b, so it generates 2-3x faster on
+// a CPU-bound PC — the real bottleneck when answering during a live call — while
+// retrieval still supplies the facts so grounded answers hold up. Flip here to
+// change the default everywhere on the frontend.
+const LOCAL_BRAIN = "gemma3:4b";
+
 export const useRobert = () => {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("idle");
@@ -398,10 +405,18 @@ export const useRobert = () => {
   );
   const [localModel, setLocalModel] = useState<string>(() => {
     const stored = localStorage.getItem(LS.localModel);
-    // migrate old defaults to the stable call-tuned brain; keep a custom pick.
-    // (-mlx crashed Metal under GPU contention; GGUF llama.cpp is stable.)
-    return !stored || stored === "qwen3.8:27b" || stored === "gemma4:12b-mlx"
-      ? "gemma4:12b"
+    // A user's explicit pick (set via the settings dropdown, which also sets
+    // robert.localModelChosen) always wins — so someone who deliberately kept the
+    // 12b keeps it.
+    if (localStorage.getItem("robert.localModelChosen") === "1" && stored) return stored;
+    // Otherwise migrate the old defaults AND the previous heavy default to the
+    // light 4B, so existing installs move over on update.
+    return !stored ||
+      stored === "qwen3.8:27b" ||
+      stored === "gemma4:12b-mlx" ||
+      stored === "gemma4:12b" ||
+      stored === "gemma4:e4b"
+      ? LOCAL_BRAIN
       : stored;
   });
   // The brain's briefing has two parts, kept separate on purpose:
@@ -753,7 +768,7 @@ export const useRobert = () => {
       const prov = providerRef.current;
       if (prov === "local") {
         return await invoke<string>("robert_suggest_local", {
-          model: localModelRef.current || "gemma4:12b",
+          model: localModelRef.current || LOCAL_BRAIN,
           system,
           user,
           maxTokens,
@@ -809,7 +824,7 @@ export const useRobert = () => {
           });
           return await invoke<string>("robert_suggest_local_stream", {
             reqId,
-            model: localModelRef.current || "gemma4:12b",
+            model: localModelRef.current || LOCAL_BRAIN,
             system,
             user,
             maxTokens,
@@ -1406,7 +1421,7 @@ export const useRobert = () => {
         // DeepSeek: warms its remote context cache (other clouds have none).
         if (providerRef.current === "local") {
           invoke("robert_prewarm_local", {
-            model: localModelRef.current || "gemma4:12b",
+            model: localModelRef.current || LOCAL_BRAIN,
             system: composeGrounding(),
           }).catch(() => {});
         } else if (
@@ -1534,7 +1549,7 @@ export const useRobert = () => {
       if (!configured) {
         try {
           const st = await invoke<{ has_model: boolean }>("robert_local_status", {
-            model: localModelRef.current || "gemma4:12b",
+            model: localModelRef.current || LOCAL_BRAIN,
           });
           if (st?.has_model) configured = true;
         } catch {

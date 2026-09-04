@@ -57,27 +57,35 @@ pub fn total_ram_bytes() -> Option<u64> {
     None
 }
 
-/// Pick the model this machine can actually run. gemma4:12b is BOTH the smallest
-/// (~7 GB) and the most capable of the local builds — the older e4b tag is
-/// actually a *larger* download (~9 GB) and was being handed to the weakest
-/// machines by mistake, which made them page continuously (single-digit t/s). So
-/// 12b is the right local pick at every RAM tier; below ~9 GB it still pages and
-/// runs slowly, so we say so and steer toward a cloud brain, which is far faster
-/// there.
+/// The default local brain, in ONE place. A dense 4B is ~1/3 the size of the old
+/// gemma4:12b (~3 GB vs ~7.6 GB), so on a CPU-bound PC — the real bottleneck when
+/// answering during a live video call — it generates 2-3x more tokens/sec while
+/// retrieval still hands it the facts, so grounded answers hold up. Change this
+/// one constant to change the default everywhere (recommend + prune list).
+pub const LOCAL_BRAIN: &str = "gemma3:4b";
+
+/// Older heavier brains we replaced. When a machine moves to LOCAL_BRAIN we prune
+/// these to reclaim disk — never the vision model, never the model in use.
+pub const OLD_BRAINS: [&str; 3] = ["gemma4:12b", "gemma4:12b-mlx", "gemma4:e4b"];
+
+/// Pick the local model to run. We standardized on a light 4B (LOCAL_BRAIN): it
+/// fits comfortably at every RAM tier and, crucially, leaves headroom for the
+/// video call and browser it runs alongside. RAM is still reported so the
+/// settings panel can steer a very low-RAM box toward a cloud brain.
 #[tauri::command]
 pub fn robert_local_recommend() -> Recommendation {
     let bytes = total_ram_bytes().unwrap_or(0);
     let gb = bytes as f64 / 1_073_741_824.0;
     if bytes == 0 {
-        return Recommendation { ram_gb: 0.0, model: "gemma4:12b".into(), why: "RAM unknown; default gemma4:12b".into() };
+        return Recommendation { ram_gb: 0.0, model: LOCAL_BRAIN.into(), why: format!("RAM unknown; default {LOCAL_BRAIN}") };
     }
-    if gb >= 9.0 {
-        Recommendation { ram_gb: gb, model: "gemma4:12b".into(), why: format!("{gb:.0} GB RAM: gemma4:12b runs well") }
+    if gb >= 8.0 {
+        Recommendation { ram_gb: gb, model: LOCAL_BRAIN.into(), why: format!("{gb:.0} GB RAM: {LOCAL_BRAIN} is a light 4B that answers fast, even during a call") }
     } else {
         Recommendation {
             ram_gb: gb,
-            model: "gemma4:12b".into(),
-            why: format!("{gb:.0} GB RAM is tight for any local model — gemma4:12b works but is slow; a cloud brain (your own key) will be much faster"),
+            model: LOCAL_BRAIN.into(),
+            why: format!("{gb:.0} GB RAM is tight — {LOCAL_BRAIN} is light and runs, but a cloud brain (your own key) will still be faster and free your RAM for the call"),
         }
     }
 }
@@ -767,6 +775,32 @@ async fn pull_via_http(app: &AppHandle, model: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Best-effort `ollama rm <model>` — a real removal that frees the disk. Silently
+/// ignores a model that is not installed or any other error, since pruning is
+/// housekeeping and must never fail the flow that called it. Headless on Windows.
+async fn remove_model_cli(app: &AppHandle, model: &str) {
+    let Some(bin) = ollama_binary() else { return };
+    emit(app, "pull", &format!("Removing old model {model} to free space…"), 0, 0);
+    let mut cmd = tokio::process::Command::new(&bin);
+    cmd.arg("rm").arg(model).env("OLLAMA_HOST", OLLAMA_LOCAL);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = cmd.status().await;
+}
+
+/// Remove a model from this machine on demand (Settings / manual cleanup). The
+/// caller decides what to remove; the vision model and the active brain are never
+/// removed automatically anywhere else.
+#[tauri::command]
+pub async fn robert_remove_model(app: AppHandle, model: String) -> Result<(), String> {
+    remove_model_cli(&app, &model).await;
+    Ok(())
+}
+
 /// Everything a consumer needs, in one call: install Ollama if missing, start
 /// it, pull the model. Progress arrives on the "robert://local" event.
 #[tauri::command]
@@ -807,6 +841,15 @@ pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalSt
     .await;
     match result {
         Ok(()) => {
+            // Now that the light brain is confirmed installed, reclaim the disk
+            // the old heavy brains took. Best-effort, and only ones that are NOT
+            // the model we just set (so an explicit 12b pick is never nuked); the
+            // vision model is never in this list.
+            for old in OLD_BRAINS {
+                if old != model {
+                    remove_model_cli(&app, old).await;
+                }
+            }
             emit(&app, "done", "Local brain ready", 1, 1);
             robert_local_status(model).await
         }

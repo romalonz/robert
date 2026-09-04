@@ -367,6 +367,12 @@ const TELL_OPENERS = [
   /^(to be (honest|fair|clear)|honestly|frankly|look|well|so)[,:]\s*/i,
   /^(it'?s (worth noting|important to note|worth mentioning) that)\s*/i,
   /^(the (short|simple|honest) answer is)[:,]?\s*/i,
+  // Small-model tics: casual acknowledgements + "let me..." announcements that a
+  // 4B tends to prepend. Nobody says these as the first words of a real answer.
+  /^(ok(ay)?|alright|alrighty|yeah|yep|yup|sure thing)[,.!:]\s*/i,
+  /^(let me (walk you through|break (this|that|it) down|explain( that)?|start( by)?)[^.!?,:]*[.!?,:])\s*/i,
+  /^(here'?s (the thing|how it works|what i'?d do|my (take|thinking))[^.!?,:]*[.!?,:])\s*/i,
+  /^basically,?\s*/i,
 ];
 
 // Word-level slop -> plain speech.
@@ -416,6 +422,18 @@ export function humanizeLine(raw: string): Humanized {
   t = t.replace(/\s*[—–]\s*/g, ", ");
   // straight quotes
   t = t.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  // Small models sometimes wrap the whole line in quotes or dress it in markdown
+  // (a 4B does this more than a 12b). Strip both so the teleprompter shows a clean
+  // spoken line. No-op on output that never had them (12b / cloud).
+  t = t.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim(); // code fences
+  t = t.replace(/^#{1,6}\s+/, "");                                   // leading heading
+  t = t.replace(/^[-*•]\s+/, "");                                    // leading bullet
+  t = t.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1"); // **bold**/*italic*
+  t = t.replace(/(^|[\s(])_([^_\s][^_]*?)_(?=[\s).,!?]|$)/g, "$1$2"); // _italic_
+  // whole-line wrapping quotes
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    t = t.slice(1, -1).trim();
+  }
   // peel stacked openers (at most three passes)
   for (let i = 0; i < 3; i++) {
     let hit = false;
