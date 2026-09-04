@@ -405,18 +405,15 @@ export const useRobert = () => {
   );
   const [localModel, setLocalModel] = useState<string>(() => {
     const stored = localStorage.getItem(LS.localModel);
-    // A user's explicit pick (set via the settings dropdown, which also sets
-    // robert.localModelChosen) always wins — so someone who deliberately kept the
-    // 12b keeps it.
+    // An explicit pick always wins (the settings dropdown sets localModelChosen),
+    // so a machine deliberately set to 12b (or 4b) keeps it.
     if (localStorage.getItem("robert.localModelChosen") === "1" && stored) return stored;
-    // Otherwise migrate the old defaults AND the previous heavy default to the
-    // light 4B, so existing installs move over on update.
-    return !stored ||
-      stored === "qwen3.8:27b" ||
-      stored === "gemma4:12b-mlx" ||
-      stored === "gemma4:12b" ||
-      stored === "gemma4:e4b"
-      ? LOCAL_BRAIN
+    // Otherwise normalize only truly-dead tags to a safe start. The platform-aware
+    // robert_local_recommend sets the REAL default (12b on mac, light 4B on
+    // Windows) and re-applies once via the effect below — so the Mac's 12b is
+    // never forced down and Windows moves to the fast 4B.
+    return !stored || stored === "qwen3.8:27b" || stored === "gemma4:12b-mlx"
+      ? "gemma4:12b"
       : stored;
   });
   // The brain's briefing has two parts, kept separate on purpose:
@@ -1835,8 +1832,10 @@ export const useRobert = () => {
     invoke<{ ram_gb: number; model: string; why: string }>("robert_local_recommend")
       .then((rec) => {
         if (rec.ram_gb > 0) setLocalRamGb(rec.ram_gb);
-        if (localStorage.getItem("robert.localRecommended") === "1") return;
-        localStorage.setItem("robert.localRecommended", "1");
+        // v2: re-apply once on update so existing Windows installs pick up the
+        // platform default (4B), while the Mac's recommendation stays 12b (no-op).
+        if (localStorage.getItem("robert.localRecommended.v2") === "1") return;
+        localStorage.setItem("robert.localRecommended.v2", "1");
         if (rec.ram_gb > 0 && rec.model !== localModelRef.current && !localStorage.getItem("robert.localModelChosen")) {
           setLocalModel(rec.model);
           localModelRef.current = rec.model;

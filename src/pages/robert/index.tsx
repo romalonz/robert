@@ -827,8 +827,8 @@ export default function Robert() {
               <input
                 value={r.localModel}
                 onChange={(e) => r.setLocalModel(e.target.value)}
-                placeholder="gemma4:12b"
-                title="Ollama model. gemma4:12b is picked for you on first run; on a low-RAM PC it runs but is slow — a cloud brain (your own key) is much faster there."
+                placeholder="gemma3:4b"
+                title="Ollama model — type to switch, both stay installed so it's instant. gemma3:4b is fast (default on Windows); gemma4:12b is higher quality but needs a strong PC (default on Mac). On a low-RAM PC a cloud brain (your own key) is faster still."
                 className={FIELD + " w-[130px]"}
               />
               {r.localStatus === null ? (

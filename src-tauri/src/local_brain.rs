@@ -57,35 +57,43 @@ pub fn total_ram_bytes() -> Option<u64> {
     None
 }
 
-/// The default local brain, in ONE place. A dense 4B is ~1/3 the size of the old
+/// The light default local brain, in ONE place. A dense 4B is ~1/3 the size of
 /// gemma4:12b (~3 GB vs ~7.6 GB), so on a CPU-bound PC — the real bottleneck when
 /// answering during a live video call — it generates 2-3x more tokens/sec while
-/// retrieval still hands it the facts, so grounded answers hold up. Change this
-/// one constant to change the default everywhere (recommend + prune list).
+/// retrieval still hands it the facts, so grounded answers hold up.
 pub const LOCAL_BRAIN: &str = "gemma3:4b";
 
-/// Older heavier brains we replaced. When a machine moves to LOCAL_BRAIN we prune
-/// these to reclaim disk — never the vision model, never the model in use.
-pub const OLD_BRAINS: [&str; 3] = ["gemma4:12b", "gemma4:12b-mlx", "gemma4:e4b"];
+/// The Mac keeps the higher-quality 12b: an Apple-Silicon box runs it fast on the
+/// GPU, so there's no speed problem there and no reason to trade down. Only the
+/// CPU-bound (Windows) machines move to the light 4B.
+pub const MAC_BRAIN: &str = "gemma4:12b";
 
-/// Pick the local model to run. We standardized on a light 4B (LOCAL_BRAIN): it
-/// fits comfortably at every RAM tier and, crucially, leaves headroom for the
-/// video call and browser it runs alongside. RAM is still reported so the
-/// settings panel can steer a very low-RAM box toward a cloud brain.
+/// The platform default. Mac -> 12b (fast on its GPU); everything else -> light 4B.
+pub fn default_local_model() -> &'static str {
+    #[cfg(target_os = "macos")]
+    { MAC_BRAIN }
+    #[cfg(not(target_os = "macos"))]
+    { LOCAL_BRAIN }
+}
+
+/// Pick the local model to run: the platform default (Mac 12b, else light 4B).
+/// RAM is still reported so the settings panel can steer a very low-RAM box
+/// toward a cloud brain.
 #[tauri::command]
 pub fn robert_local_recommend() -> Recommendation {
     let bytes = total_ram_bytes().unwrap_or(0);
     let gb = bytes as f64 / 1_073_741_824.0;
+    let model = default_local_model();
     if bytes == 0 {
-        return Recommendation { ram_gb: 0.0, model: LOCAL_BRAIN.into(), why: format!("RAM unknown; default {LOCAL_BRAIN}") };
+        return Recommendation { ram_gb: 0.0, model: model.into(), why: format!("RAM unknown; default {model}") };
     }
     if gb >= 8.0 {
-        Recommendation { ram_gb: gb, model: LOCAL_BRAIN.into(), why: format!("{gb:.0} GB RAM: {LOCAL_BRAIN} is a light 4B that answers fast, even during a call") }
+        Recommendation { ram_gb: gb, model: model.into(), why: format!("{gb:.0} GB RAM: {model} runs well here") }
     } else {
         Recommendation {
             ram_gb: gb,
-            model: LOCAL_BRAIN.into(),
-            why: format!("{gb:.0} GB RAM is tight — {LOCAL_BRAIN} is light and runs, but a cloud brain (your own key) will still be faster and free your RAM for the call"),
+            model: model.into(),
+            why: format!("{gb:.0} GB RAM is tight — {model} runs, but a cloud brain (your own key) will still be faster and free your RAM for the call"),
         }
     }
 }
@@ -841,15 +849,9 @@ pub async fn robert_setup_local(app: AppHandle, model: String) -> Result<LocalSt
     .await;
     match result {
         Ok(()) => {
-            // Now that the light brain is confirmed installed, reclaim the disk
-            // the old heavy brains took. Best-effort, and only ones that are NOT
-            // the model we just set (so an explicit 12b pick is never nuked); the
-            // vision model is never in this list.
-            for old in OLD_BRAINS {
-                if old != model {
-                    remove_model_cli(&app, old).await;
-                }
-            }
+            // Keep any previously installed brain (e.g. 12b) in place so switching
+            // back to it in Settings is instant — nothing is auto-removed. A user
+            // who wants the space back can prune manually via robert_remove_model.
             emit(&app, "done", "Local brain ready", 1, 1);
             robert_local_status(model).await
         }
