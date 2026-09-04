@@ -1640,7 +1640,14 @@ export const useRobert = () => {
           content: out + "\n",
         });
         if (!opts.fromSources) {
-          await invoke("robert_archive_source", { notesFolder: notesFolderRef.current, file });
+          // Best effort: the knowledge file is already saved above, so a hiccup
+          // moving the original into sources/ must NEVER report the whole
+          // conversion as failed (this was the "source not found" error).
+          try {
+            await invoke("robert_archive_source", { notesFolder: notesFolderRef.current, file });
+          } catch (e) {
+            console.warn("archive source failed (non-fatal):", e);
+          }
         }
         if (isProfile) {
           madeProfile = true;

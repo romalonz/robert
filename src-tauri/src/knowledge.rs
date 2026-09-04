@@ -215,14 +215,27 @@ pub fn robert_import_bytes(
 #[tauri::command]
 pub fn robert_archive_source(notes_folder: Option<String>, file: String) -> Result<(), String> {
     let (_, base) = resolve_notes_folder(notes_folder)?;
-    let name = safe_file_name(&file);
-    let src = base.join(&name);
+    // Locate the source by the name as it actually sits on disk — the SAME name
+    // robert_extract_text just read. file_name() strips any directory (guarding
+    // against path traversal) but, unlike safe_file_name, keeps accents,
+    // apostrophes, ampersands and spaces, so a file like "José's Résumé.pdf" is
+    // still found. Sanitizing here was the "source not found" bug: it mangled
+    // the name to something no longer on disk and failed the whole conversion.
+    let raw = Path::new(&file)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| file.clone());
+    let src = base.join(&raw);
     if !src.is_file() {
-        return Err("source not found".into());
+        // Already archived, or it never landed here — the goal (don't offer it
+        // again) is met either way, so this is housekeeping, not a failure.
+        return Ok(());
     }
     let dir = base.join("sources");
     let _ = std::fs::create_dir_all(&dir);
-    std::fs::rename(&src, dir.join(&name)).map_err(|e| e.to_string())
+    // Keep the same on-disk name so the note's "Source:" line still points at it
+    // (robert_list_unprofiled matches sources/<that name>).
+    std::fs::rename(&src, dir.join(&raw)).map_err(|e| e.to_string())
 }
 
 /// The user's profile note, if they keep one (profile*.md, *resume*.md,
