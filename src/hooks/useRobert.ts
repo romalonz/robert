@@ -207,7 +207,7 @@ Output Markdown with EXACTLY these sections, in this order, and nothing else:
 ## Action items
 (owner, what, and when if stated)
 ## Questions asked of me
-(for each: the question; what I actually answered from Me lines, or "not captured"; what Robert suggested; and one word: used / adapted / ignored / unknown)
+(Capture EVERY substantive question the other side asked me. In a 1:1, screening, or interview essentially every question they raise is aimed at me, whether or not it used my name — do not limit this to by-name questions. For each: the question; what I actually answered from Me lines, or "not captured"; what Robert suggested — ALWAYS record the suggestion whenever a "Robert (suggested)" line followed the question, even when no Me line exists, since that is what feeds my Q/A bank; and one word: used / adapted / ignored / unknown)
 ## Facts and numbers stated
 (exact numbers and names as spoken)
 ## Open questions and follow-ups
@@ -1291,6 +1291,13 @@ export const useRobert = () => {
           dir,
         });
         if (turns < 2) {
+          // Nothing worth keeping: a header-only / near-empty session where
+          // capture produced no real turns. Remove the empty folder so the
+          // meeting picker and memory stay clean instead of piling up dead
+          // dirs (these were the bulk of the "orphaned" meetings on disk).
+          try {
+            await invoke("robert_delete_meeting", { notesFolder, dir });
+          } catch {}
           setPostMeeting("");
           refreshMeetings();
           return;

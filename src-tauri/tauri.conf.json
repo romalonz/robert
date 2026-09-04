@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Robert",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "identifier": "com.robertapp.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
