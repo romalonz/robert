@@ -319,6 +319,11 @@ CRITICAL: match the exact technology and language in the problem. If the stack i
 
 The reader is NOT a programmer: no jargon (define any unavoidable term in 3 words in parentheses); keep each line short enough to say out loud; friendly, confident, first person.
 
+If a "## MY BACKGROUND" section is included at the end of this prompt, it is real information about ME. Use it whenever the screenshot is a question aimed at me.
+
+FORMAT for a QUESTION DIRECTED AT ME — an interview, application, or screening question asking about my experience, background, skills, opinion, or preferences ("How many years…", "Tell me about…", "Describe your…", "Walk me through your experience with…", "Why do you…", "What's your approach to…"). This is NOT a how-to for a tool, so DO NOT give steps.
+1. My answer — the actual first-person answer I can say or type right now, grounded in MY BACKGROUND below. Lead with the direct response (the years, the platforms, the yes/no), then two or three specific details from my real experience: a project, a tool, a number as a natural estimate ("about", "around"). If my background doesn't cover it directly, sound knowledgeable and bridge to my closest real experience — never say I lack it, never invent a specific false claim. This is the real answer in my voice, complete and speakable — NOT instructions about how to answer.
+
 FORMAT for an ALGORITHM or coding puzzle (e.g. "return the indices that add to target", string/array/data-structure problems, "write a function that…"):
 1. What it's asking — one plain sentence, no code words.
 2. The idea — the trick in one line + one everyday analogy on the next.
@@ -1834,11 +1839,19 @@ export const useRobert = () => {
   // ── Solve screen: capture a region and send it to a vision model ──────────
   const visionCall = useCallback(async (imageB64: string): Promise<string> => {
     const prov = providerRef.current;
+    // Include my real background so Solve can ANSWER a question aimed at me
+    // (interview/application/screening) in first person, not just give steps.
+    // Capped so a huge notes file doesn't blow the vision prompt.
+    const bg = (notesRef.current || "").slice(0, 6000);
+    const solveSystem = bg
+      ? `${SOLVE_SYSTEM}\n\n## MY BACKGROUND (real facts about me — for any question aimed at me, answer in first person AS me using these)\n${bg}`
+      : SOLVE_SYSTEM;
+    const user = "Answer or solve what's in this screenshot. If it's a question directed at me, give my actual first-person answer, not steps.";
     if (prov === "local") {
       return await invoke<string>("robert_vision_local", {
         model: visionModelRef.current || "qwen2.5vl:7b",
-        system: SOLVE_SYSTEM,
-        user: "Solve the task in this screenshot.",
+        system: solveSystem,
+        user,
         imageBase64: imageB64,
         maxTokens: 1500,
       });
@@ -1849,14 +1862,14 @@ export const useRobert = () => {
     const mdl = (cloudModelsRef.current[prov] || meta?.defaultModel || "").trim();
     if (prov === "anthropic") {
       return await invoke<string>("robert_vision_anthropic", {
-        apiKey: key, model: mdl || "claude-opus-5", system: SOLVE_SYSTEM,
-        user: "Solve the task in this screenshot.", imageBase64: imageB64, maxTokens: 1500,
+        apiKey: key, model: mdl || "claude-opus-5", system: solveSystem,
+        user, imageBase64: imageB64, maxTokens: 1500,
       });
     }
     const baseUrl = prov === "custom" ? customBaseUrlRef.current.trim() : meta?.baseUrl || "";
     return await invoke<string>("robert_vision_openai", {
-      apiKey: key, model: mdl, system: SOLVE_SYSTEM,
-      user: "Solve the task in this screenshot.", imageBase64: imageB64, baseUrl, maxTokens: 900,
+      apiKey: key, model: mdl, system: solveSystem,
+      user, imageBase64: imageB64, baseUrl, maxTokens: 1200,
     });
   }, []);
 
