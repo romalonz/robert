@@ -258,8 +258,10 @@ A) JOB DESCRIPTION or job posting: write an INTERVIEW KNOWLEDGE file with exactl
 ${ANSWER_FORMAT_BLOCK}
 ## The role in one line
 ## My opening pitch (if asked "tell me about yourself")
-## JD requirements mapped to my experience (bridge = related, not identical)
-(one "### <requirement>" per requirement in the JD, with bullets underneath)
+## JD requirements mapped to my experience
+(one "### <requirement>" per requirement in the JD. For each requirement:
+- If the PROFILE shows real experience with it, give bullets that name the specific project, client, and number that prove it — the direct bridge.
+- If the PROFILE does NOT cover it, still make me sound knowledgeable and never leave it blank: one bullet "How it works:" with a crisp, correct take on the subject or the right approach a strong candidate would describe, and one bullet "Bridge:" tying it to my CLOSEST real experience ("closely related — same principle / same tooling / same outcome"). Never fabricate specific experience I don't have; the goal is competent and prepared, not a false claim.)
 ## What I do today
 ## Employment highlights (numbers as on my profile)
 ## Projects and freelance work
@@ -902,9 +904,10 @@ export const useRobert = () => {
           relevant = await invoke<string>("robert_retrieve_notes", {
             notesFolder: notesFolderRef.current,
             query: q,
-            // ~1400 chars ≈ 350 tokens ≈ +0.3s prompt eval on gemma4:12b; the top
-            // paragraph carries the answer, more only adds latency
-            maxChars: 1400,
+            // Wider budget so the exact bridge/metric AND some varied backup
+            // material are both in front of the model (interview answers lean on
+            // specifics + variety); the server diversifies across sections.
+            maxChars: 2200,
             // the note selected for this meeting (or the brief) ranks first
             prefer: notesFileRef.current || "robert-brief.md",
           });
@@ -912,7 +915,7 @@ export const useRobert = () => {
           relevant = "";
         }
       }
-      const recentLines = mySuggestionsRef.current.slice(-2);
+      const recentLines = mySuggestionsRef.current.slice(-4);
       // conversation read: auto mode adapts; explicit modes keep their rule
       const read = readConversation(historyRef.current, segment, convCtx());
       const readHint =
@@ -938,10 +941,10 @@ export const useRobert = () => {
           : "") +
         `The other side is saying this now. Treat it as ONE message and respond to the WHOLE thing, even if it is several sentences:\n${segment || turnText}\n\n` +
         (relevant
-          ? `RELEVANT NOTES (pulled from my files for this question; use the specifics that fit, quote numbers exactly):\n${relevant}\n\n`
+          ? `RELEVANT NOTES (pulled from my files for THIS question). Answer FROM these: name the specific experience, project, or JD-requirement bridge that maps to exactly what they asked, and quote the concrete number/name/client. A generic answer that could come from anyone — one that skips these specifics — is wrong.\n${relevant}\n\n`
           : "") +
         (recentLines.length
-          ? `Recent lines I already have (do not repeat their wording or shape):\n${recentLines.map((l) => `- ${l}`).join("\n")}\n\n`
+          ? `Answers I ALREADY gave earlier this session. Do NOT repeat their wording, and do NOT reuse the same project, example, story, or number — my notes hold several, so draw on a DIFFERENT one each time:\n${recentLines.map((l) => `- ${l}`).join("\n")}\n\n`
           : "") +
         groupBlock +
         readHint +
@@ -952,6 +955,8 @@ export const useRobert = () => {
               ? `- This is a NARRATIVE question (a history, a walkthrough, an example): use the narrative allowance, up to ${cap} characters, 4 to 6 bullets in time order, each carrying one concrete number or name. Still open with the one-sentence explainer.\n`
               : "")
           : "") +
+        `- GROUND IT IN ME: when my notes show real experience with what they asked, lead with THAT — the specific project, client, and number that maps to the question (the bridge).\n` +
+        `- IF I HAVE NO DIRECT EXPERIENCE on the topic: never say so, and never invent a specific claim. Sound knowledgeable anyway — open with one crisp, correct line on how the thing actually works or the right approach to it, then bridge to my closest real experience ("I've worked mostly with X, which is closely related — same principle applies"). Come across as prepared and competent, drawing on the illustrative scenarios in my notes for shape, without claiming I did something I didn't.\n` +
         `- They have already paused by the time you see this. Reply EXACTLY WAIT only if they are clearly mid-thought, or the text sounds like my own voice echoed back. When in doubt, give me a line.\n` +
         `- If a good answer needs current or external info you are not sure of, reply EXACTLY: NEEDS_RESEARCH: <focused web query>\n` +
         `- Otherwise give me the answer to say, in my Answer format above: open with a one-line intro that frames the point in my own words, then the complete answer using the concrete specifics (numbers, names, facts) from my notes. Natural and speakable, as if I thought of it. If a claim seems off, make it a polite probing question. No labels, just the answer.`;

@@ -1339,9 +1339,16 @@ pub fn robert_retrieve_notes(
         }
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let cap = max_chars.unwrap_or(1400);
+    let cap = max_chars.unwrap_or(2200);
     let mut out = String::new();
-    for (_, rel, ch) in scored.into_iter().take(4) {
+    // Diversify: at most one chunk per (file, heading), so the model gets VARIED
+    // material — different projects/sections — instead of the same story twice.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_, rel, ch) in scored.into_iter().take(12) {
+        let head = ch.lines().next().unwrap_or("").trim().to_lowercase();
+        if !seen.insert(format!("{}|{}", rel, head)) {
+            continue;
+        }
         let block = format!("### {}\n{}\n\n", rel, ch.trim());
         if out.len() + block.len() > cap {
             break;
