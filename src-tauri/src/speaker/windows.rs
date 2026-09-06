@@ -245,9 +245,16 @@ impl SpeakerStream {
                         }
                     }
 
-                    if h_event.wait_for_event(3000).is_err() {
-                        error!("Pluely timeout error, stopping capture");
-                        break;
+                    // WASAPI loopback only fires this event while audio is
+                    // actually playing, so a timeout here just means silence, e.g.
+                    // the gap between one question and the next. The stream is
+                    // still valid and fires again when audio resumes, so keep
+                    // listening instead of tearing capture down. The old `break`
+                    // here is what made Robert go deaf after the first question
+                    // until a manual Start/Stop. A short window keeps Stop
+                    // responsive via the shutdown check at the top of the loop.
+                    if h_event.wait_for_event(1000).is_err() {
+                        continue;
                     }
 
                     let mut temp_queue = VecDeque::new();
