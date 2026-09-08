@@ -172,13 +172,51 @@ export const DEFAULT_VOICE = (_vm ? _vm[0] : "## Voice (composite, applied to fi
 // FIXED rules = the default grounding with the voice section removed.
 export const DEFAULT_RULES = DEFAULT_GROUNDING.replace(VOICE_SECTION_RE, "").replace(/\n{3,}/g, "\n\n").trim();
 
-/// Build the "## Voice" section from selected character ids.
+/// Build the "## Voice" section from selected character ids. A voice is defined
+/// by CONCRETE word choice (diction, rhythm, pronoun lean, hedging, openers, a
+/// "never say" list) plus example lines, not adjectives, because concrete rules +
+/// examples steer the model where trait words collapse into a generic voice. A
+/// blend is ONE unified persona: the FIRST pick owns the diction, later picks add
+/// a single accent each (no ratio wording). Falls back to `trait` for any voice
+/// not yet enriched. Output stays a single "## Voice" section (no inner "## ").
+type VoiceEntry = (typeof VOICES)[number];
 function composeVoiceText(ids: string[]): string {
-  const chosen = VOICES.filter((v) => ids.includes(v.id));
-  const lines = chosen.length
-    ? chosen.map((v) => `- ${v.label.split(" - ").pop()}: ${v.trait}`).join("\n")
-    : "- Balanced: calm, sharp, consultative; no fluff, no hedging.";
-  return `## Voice (composite, applied to fit the moment)\n${lines}\n- Style: tight and precise, consultative, structured. No fluff. No hedging.`;
+  const head = `## Voice (composite, applied to fit the moment)`;
+  const style = `- Style: tight and precise, consultative, structured. No fluff. No hedging.`;
+  const guard =
+    `- You tend to drift toward generic, on-distribution AI phrasing. Avoid it. Never use: delve, underscore, showcase, tapestry, meticulous, pivotal, comprehensive, robust, seamless, leverage, utilize, "not just X, it's Y". Use plain, specific words and a real number instead.`;
+  const chosen = ids
+    .map((id) => VOICES.find((v) => v.id === id))
+    .filter((v): v is VoiceEntry => !!v);
+  if (!chosen.length) {
+    return `${head}\n- Balanced: calm, sharp, consultative; no fluff, no hedging.\n${style}\n${guard}`;
+  }
+  const nameOf = (v: VoiceEntry) => v.label.split(" - ").pop() || v.label;
+  const dialsOf = (v: VoiceEntry) => {
+    const d: string[] = [];
+    if (v.diction) d.push(v.diction);
+    if (v.rhythm) d.push(v.rhythm);
+    if (v.pronoun) d.push(`${v.pronoun} pronouns`);
+    if (v.hedge) d.push(`${v.hedge} hedging`);
+    if (v.openers) d.push(`opens ${v.openers}`);
+    return d.length ? d.join("; ") : v.trait;
+  };
+  const [primary, ...accents] = chosen;
+  const lines = [head];
+  if (accents.length) {
+    lines.push(`- One unified voice. ${nameOf(primary)} owns the words: ${dialsOf(primary)}.`);
+    if (primary.neverSay) lines.push(`  Never say: ${primary.neverSay}.`);
+    for (const a of accents) lines.push(`- ${nameOf(a)} adds one accent: ${a.diction || a.trait}.`);
+    if (primary.examples?.length)
+      lines.push(`- The words sound like: ${primary.examples.slice(0, 2).map((e) => `"${e}"`).join(" / ")}`);
+  } else {
+    lines.push(`- ${nameOf(primary)}: ${dialsOf(primary)}.`);
+    if (primary.neverSay) lines.push(`  Never say: ${primary.neverSay}.`);
+    if (primary.examples?.length)
+      lines.push(`- Sounds like: ${primary.examples.slice(0, 3).map((e) => `"${e}"`).join(" / ")}`);
+  }
+  lines.push(style, guard);
+  return lines.join("\n");
 }
 
 /// Pull just the "## Voice" block out of whatever is in _persona.md (handles a
@@ -239,9 +277,12 @@ Rules: UPDATE status when an open item is resolved; keep at most 80 lines.`,
 
 // ─── Knowledge inbox: rewrite any document into Robert's file spec ───────────
 const ANSWER_FORMAT_BLOCK = `## Answer format
-- Start with ONE short explainer sentence in plain prose (no bullet), then the bullets.
-- Default: at most 400 characters in total, 2 to 3 short bullets, each one a fact, number, or claim I can say out loud.
-- Narrative questions (walk me through, tell me about yourself, employment history, career path, end to end, give me an example): up to 900 characters, 4 to 6 bullets in time order, each with one number or name.`;
+- Lead with the point: the first sentence is the answer or claim, then support it (interviewers and executives value brevity).
+- Screening or factual questions: 1 to 2 tight sentences, one concrete fact or number.
+- Behavioral or "walk me through" questions: a STAR answer, about 60 to 90 seconds. Spend most of it on what I DID and WHY (the actions and the key decision), close on a defensible result, end with one line on what I learned.
+- Numbers are estimates I can defend and source on demand ("about", "around", a round figure), never a suspiciously exact or inflated figure.
+- Different example every time. Keep a bench of stories so I am never caught with only one.
+- Sound like a person, not a script: a natural lead-in, one real reflection, plain words. Never identical phrasing across answers.`;
 
 // Applied to EVERY answer when the selected notes file defines no "## Answer
 // format" of its own (e.g. profile.md). Intro first, then the complete answer —
@@ -258,23 +299,46 @@ A) JOB DESCRIPTION or job posting: write an INTERVIEW KNOWLEDGE file with exactl
 # Interview knowledge: <role>, <company>
 ${ANSWER_FORMAT_BLOCK}
 ## The role in one line
+(what this role really exists to do, in plain words)
 ## My opening pitch (if asked "tell me about yourself")
+(present, then past, then future: who I am now, the 2 to 3 experiences that qualify me, why I want THIS role. About 60 to 90 seconds. Tailored to the posting. Close on why this role, which hands the conversation back.)
 ## JD requirements mapped to my experience
-(one "### <requirement>" per requirement in the JD. For each requirement:
-- If the PROFILE shows real experience with it, give bullets that name the specific project, client, and number that prove it — the direct bridge.
-- If the PROFILE does NOT cover it, still make me sound knowledgeable and never leave it blank: one bullet "How it works:" with a crisp, correct take on the subject or the right approach a strong candidate would describe, and one bullet "Bridge:" tying it to my CLOSEST real experience ("closely related — same principle / same tooling / same outcome"). Never fabricate specific experience I don't have; the goal is competent and prepared, not a false claim.)
+(one "### <requirement>" per requirement in the JD. For each:
+- If the PROFILE proves it, bullets that name the specific project, tool, and number.
+- If the PROFILE does NOT cover it, three bullets, and never leave it blank:
+  - "How it works:" a crisp, correct take on the subject or the right approach a strong practitioner would describe.
+  - "Internal build:" a real internal or self-directed project I did with the ACTUAL tool, the concrete hands-on evidence I have done it.
+  - "Going deeper:" what I am actively doing to extend it.
+  Be ready to go two "why"s deeper on any of these. Never claim a specific named-client engagement I did not do.)
 ## What I do today
-## Employment highlights (numbers as on my profile)
+## Employment highlights (numbers as on my profile, exact)
 ## Projects and freelance work
-## Illustrative project scenarios (sample, adapt to your real work)
-(4 to 6 DISTINCT, detailed sample projects a person in THIS role would plausibly have delivered for a company like this one. Research what such projects actually involve. Each one covers a DIFFERENT capability from the JD and uses DIFFERENT numbers and a DIFFERENT context, so answers have variety. Format each as "### <short project title>" then five short lines: "Plan:", "Design:", "Develop:", "Implement:", "Result:" with a concrete metric. These are illustrative examples grounded in the profile's real skills to give me varied material to speak to, not claimed history: begin this section with one line "These are sample scenarios based on typical work for this role; adapt to your real projects.")
-## The company (researched; say "as I understand it")
+## My internal builds and projects
+(4 to 6 DISTINCT real internal or self-directed builds with the actual tools. These are real hands-on work I speak as lived, and I can go deeper on any decision. Each covers a DIFFERENT capability with different numbers and context, so my answers show range. Format each as:
+### <short build title>
+- Situation: the real need, why I built it
+- What I did: the concrete steps and tools, the KEY DECISION, and one trade-off it cost me (this is the messy middle a deep-dive probes for)
+- Result: a defensible metric
+- What I learned or would change
+Begin this section with one line: "These are my real internal builds with these tools; I speak them as lived, hands-on work.")
+## The company (researched; I say "as I understand it")
 ## A day in this job
-## Likely questions and my bullets
-(one "### <question>" per question, two bullets each; 8 to 10 questions. Each answer must draw on a DIFFERENT project, scenario, or metric than the others; never reuse the same project or the same number twice, and never repeat a phrasing.)
+## Likely questions and my key points
+(one "### <question>" per question, 8 to 10 questions. Give KEY POINTS to hit, not a word-for-word script, because a memorized script collapses on a reworded question and reads as canned. Each answer draws on a DIFFERENT build or story, opens with a natural lead-in, and ends with one "If they push:" line naming the deeper detail to give. I prepare the shape and deliver it fresh.)
 ## 30-60-90
+(First 30 days lead with listening and learning the org and stakeholders, not sweeping change. Use range-based goals so delivering at the high end exceeds expectations. Name my top ~3 risks with a mitigation each. No heroic overpromises.)
 ## Questions I can ask them
+(strategic, business-level questions tied to their stage and challenges, for example what success looks like in the role, how strategy has shifted, what top performers do. Weave 1 or 2 in during the conversation, and ask a genuine follow-up to what they say, which is the strongest engagement signal. Skip perks.)
 ## Hard rules for my answers
+- Lead with the point; keep it brief.
+- Translate impact into business terms: grow, earn, save.
+- Tell judgment and strategy stories, not task lists.
+- Numbers are defensible and I can name the source if asked.
+- Never badmouth anyone; own my failures.
+- A weakness is self-awareness plus what I did about it.
+- Composure: it is fine to pause before a hard question.
+- Be ready to go TWO "why"s deeper on any claim.
+- Natural, non-scripted delivery, and the lived-experience markers (an alternative not taken, a sourced number, a real failure, bounded "I", a constraint detail, a "tried A then B" beat, a rebuild-it reflection), then invite the follow-up.
 ## Sources
 (exactly two bullets: "- Source: <source file name>" and "- Profile: profile.md" when a PROFILE was given, or "- Profile: none (upload your résumé and this file will be rebuilt against it)" when not)
 
@@ -290,26 +354,40 @@ C) RÉSUMÉ, CV, or LinkedIn profile export: write a PROFILE file with exactly t
 ## Numbers I can quote
 (every metric in the résumé on one line each, exact)
 
-B) Anything else (agenda, brief, handover, project document, report, notes, transcript, email thread): write a MEETING BRIEF with exactly these sections:
+B) Anything else (agenda, brief, handover, project document, report, notes, transcript, email thread, or a client or discovery call): write a MEETING BRIEF with exactly these sections:
 # Brief: <topic>
 ## Who is in the room and the tone to hold
 ## What this is about
+## Discovery questions to ask
+(11 to 14 business-outcome questions, spaced through the call, not front-loaded and not an interrogation. Diagnose before I prescribe. Shape them SPIN-style: few Situation questions (I research those beforehand), then lean on Problem, Implication (the consequences and cost of the status quo), and Need-payoff (what solving it is worth). Go deep on only 3 or 4 real problems.)
 ## Numbers I can state with confidence
+(defensible and sourced; I can say where each came from)
 ## Decisions and their reasons
 ## Risks, cost, security, and anything already disclosed
-## Likely challenges and my one-line answers
-(one "### <challenge>" per challenge)
+## Proof if they ask "have you done this before"
+(the honest same/new bridge: "I have not done it in your exact context, but I have solved the same underlying problem in <analogous situation>. Here is what carries over directly, here is the part that is genuinely new, and here is how I would de-risk it." Back it with the analogous case, my methodology walked step by step, and internal builds written up as problem, approach, result artifacts. Optional accusation audit to defuse the doubt: "You are probably wondering whether I have done exactly this before.")
+## Likely challenges and my answers
+(one "### <challenge>" per challenge. Objection structure: acknowledge first, reframe to value, then answer briefly. Isolate the real blocker ("aside from that, is there anything else?"). Establish value before price; never discount reflexively.)
 ## Open items and next steps
-## Hard rules for my answers
+## How I stay credible here
+- Diagnose before I prescribe; understand the problem before proposing anything.
+- Talk about 45%, listen about 57%; many short exchanges beat a monologue.
+- Lead with the answer, then support it.
+- Calibrated confidence: I say what I am sure of and what I am not.
+- Admit one real limit early; it makes my positive claims more believable.
+- Business language: grow, risk, save.
+- On video: camera on at eye level, good audio.
 ## Sources
 ("- Source: <source file name>")
 
 Rules:
-- Use only facts from the SOURCE and, when given, the PROFILE. Never invent numbers, names, dates, or claims. Where the source has nothing for a section, write one bullet starting with "(add:" that says what to fill in.
-- For A: map EVERY requirement to the PROFILE. When the profile lacks it, start the bullet with "Bridge:" and give the closest related experience from the profile. When no profile is given, write "(add: your experience with <requirement>)".
-- For A, "A day in this job", "Illustrative project scenarios", and "Likely questions" may draw on general knowledge of the role. The scenarios and any invented specifics are illustrative examples to adapt, not the profile's real history; keep them realistic and mention the company or its context, but do not present a made-up metric as a fact from the profile.
-- VARIETY IS REQUIRED: across the whole file, do not repeat the same project, the same metric, or the same sentence shape. Every requirement, scenario, and question answer should surface DIFFERENT material so the live answers never sound redundant. Real profile numbers stay exact; illustrative numbers should each be different and plausible.
-- Quote every real number exactly as written in the source. Short bullets. Plain English. No em dashes. No tables. First person for anything I would say.
+- Use only facts from the SOURCE and, when given, the PROFILE for real history. Never invent a named-client engagement, a job, or a claim of experience I do not have. Where the source has nothing for a section, write one bullet starting with "(add:" that says what to fill in.
+- For A: map EVERY requirement to the PROFILE. When the profile lacks it, use the three-bullet internal-build bridge ("How it works", "Internal build", "Going deeper"). When no profile is given, write "(add: your experience with <requirement>)".
+- For A, "A day in this job", "My internal builds and projects", and "Likely questions" may draw on general knowledge of the role. Flesh out the DETAILS of systems and processes freely so the answers sound hands-on; that is craft. Frame internal builds as real hands-on work spoken as lived, but never present a made-up named-client engagement as fact.
+- Numbers must be DEFENSIBLE and sourced on demand: an estimate I can explain the origin of, never a suspiciously exact or inflated figure.
+- Include the lived-experience markers in the internal builds and answers: an alternative not taken and its trade-off, a sourced number, a real failure with its cause, bounded "I", a constraint detail, and a "what I would change" reflection.
+- VARIETY IS REQUIRED: across the whole file, do not repeat the same project, the same metric, or the same sentence shape. Every requirement, build, and question answer should surface DIFFERENT material so the live answers never sound redundant. Real profile numbers stay exact; internal-build numbers should each be different and plausible.
+- Quote every real number exactly as written in the source. Short bullets. Plain, specific English, no corporate jargon. No em dashes. No tables. First person for anything I would say.
 - Keep the whole file under 14,000 characters (a PROFILE may run to 14,000).`;
 
 // System prompt for the "Solve screen" vision feature: reads a screenshot of a

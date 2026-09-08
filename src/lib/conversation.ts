@@ -404,7 +404,7 @@ const SLOP_SWAPS: [RegExp, string][] = [
 
 // Heavy tells that need a real rewrite, not a word swap.
 const HEAVY_TELLS =
-  /\b(not (just|only|merely) [^.]{2,60}?,? (but|it'?s) (also |about )?)|\b(delve|tapestry|testament to|landscape|pivotal|multifaceted|underscore[sd]?|garner|bolster|paramount|game[- ]chang|groundbreaking|cutting[- ]edge|transformative|unprecedented|holistic|synergi|empower|elevate|unlock the)/i;
+  /\b(not (just|only|merely) [^.]{2,60}?,? (but|it'?s) (also |about )?)|\b(delve|tapestry|testament to|landscape|pivotal|multifaceted|underscore[sd]?|showcas(e|es|ed|ing)|meticulous(ly)?|comprehensive(ly)?|garner|bolster|paramount|game[- ]chang|groundbreaking|cutting[- ]edge|transformative|unprecedented|holistic|synergi|empower|elevate|unlock the)/i;
 
 export interface Humanized {
   text: string;
