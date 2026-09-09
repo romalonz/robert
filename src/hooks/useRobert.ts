@@ -277,19 +277,19 @@ Rules: UPDATE status when an open item is resolved; keep at most 80 lines.`,
 
 // ─── Knowledge inbox: rewrite any document into Robert's file spec ───────────
 const ANSWER_FORMAT_BLOCK = `## Answer format
-- Lead with the point: the first sentence is the answer or claim, then support it (interviewers and executives value brevity).
-- Screening or factual questions: 1 to 2 tight sentences, one concrete fact or number.
-- Behavioral or "walk me through" questions: a STAR answer, about 60 to 90 seconds. Spend most of it on what I DID and WHY (the actions and the key decision), close on a defensible result, end with one line on what I learned.
-- Numbers are estimates I can defend and source on demand ("about", "around", a round figure), never a suspiciously exact or inflated figure.
-- Different example every time. Keep a bench of stories so I am never caught with only one.
-- Sound like a person, not a script: a natural lead-in, one real reflection, plain words. Never identical phrasing across answers.`;
+- Lead with the point: the first line is the direct answer in ONE short intro sentence in my own words (the yes/no, the number, the platform). No canned opener like "great question" or "I understand".
+- Then 2 to 4 tight bullets with the specific facts, tools, numbers, and one concrete example from my notes that back it up. Each bullet short enough to say out loud.
+- Keep a normal answer to about 400 characters. ONLY a "walk me through", "tell me about", or "describe your experience" question expands into a brief story in time order, up to about 900 characters.
+- Numbers are estimates I can defend ("about", "around", a round figure), never a suspiciously exact or inflated figure.
+- Different example every time; never reuse a phrasing, story, or metric from the recent lines. Keep a bench of stories so I am never caught with only one.
+- Sound like me thinking out loud, not a script: a natural lead-in, plain words, one real detail.`;
 
 // Applied to EVERY answer when the selected notes file defines no "## Answer
 // format" of its own (e.g. profile.md). Intro first, then the complete answer —
 // the shape Romeo asked for so cloud (and local) answers read "our way".
-const DEFAULT_ANSWER_FORMAT = `- Open with ONE short intro sentence that frames the point in my own words — a genuine lead-in, never a canned opener ("great question", "I understand", "that's fair").
-- Then give the COMPLETE answer: the specific facts, numbers, and names from my notes that fully address what was asked. Don't drop the detail that makes it usable.
-- Natural and speakable, as if I thought of it myself. Usually 3 to 5 sentences — complete over terse, but no padding.`;
+const DEFAULT_ANSWER_FORMAT = `- Open with ONE short intro sentence that frames the point in my own words, a genuine lead-in, never a canned opener ("great question", "I understand", "that's fair").
+- Then 2 to 4 short bullets with the specific facts, numbers, and names from my notes that answer what was asked. Keep the detail that makes it usable; cut the padding.
+- Keep it tight and speakable, about 400 characters. ONLY a "walk me through" or "tell me about" question runs longer, up to about 900 characters. Natural, as if I thought of it myself.`;
 
 const CONVERT_SYSTEM = `You convert one source document into ONE Markdown knowledge file for Robert, a live meeting copilot that reads the file during a call and quotes it. Output ONLY the Markdown file: no commentary, no code fences, no preamble.
 
