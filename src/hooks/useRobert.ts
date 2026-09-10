@@ -710,6 +710,10 @@ export const useRobert = () => {
   useEffect(() => { track("app_open", { provider: providerRef.current }); }, [track]);
 
   const reqIdRef = useRef(0);
+  // A live suggestion is generating right now. Used to serialize generation:
+  // never start a second one for the same turn while one is in flight (that is
+  // what stacked 5 to 7 near-identical answers that flickered past mid-question).
+  const suggestingRef = useRef(false);
   // id of the request whose answer currently owns the main display. Answers
   // display monotonically: a finished answer newer than what is shown takes
   // the screen NOW, even while an even-newer request is still generating —
@@ -935,6 +939,7 @@ export const useRobert = () => {
       modeRef.current === "auto" && interviewFile ? "interview" : modeRef.current; // conversation type
     const id = ++reqIdRef.current;
     // keep the current answer on screen until a new one is ready (and on WAIT)
+    suggestingRef.current = true;
     setSuggesting(true);
     setError(null);
 
@@ -945,8 +950,13 @@ export const useRobert = () => {
     const askedText = (segmentRef.current.join(" ") + " " + partialRef.current + " " + turnText).trim();
     const cap = capFor(fmt, askedText);
     const narrative = !!fmt && isNarrativeQuestion(askedText);
+    // Always cap the live answer, even when the selected knowledge file names no
+    // character limit. Uncapped answers ran 550 to 900 chars and buried the
+    // point; default to a tight ceiling (a lead line plus a couple of short
+    // bullets), with more room only for narrative "walk me through" questions.
+    const effectiveCap = cap ?? (isNarrativeQuestion(askedText) ? 720 : 380);
     // a character cap means fewer tokens: ~3.5 chars per token plus slack
-    const budget = cap ? Math.min(480, Math.ceil(cap / 3.5) + 60) : 320;
+    const budget = Math.min(480, Math.ceil(effectiveCap / 3.5) + 60);
     const askBrain = (user: string) => brainCall(composeGrounding(), user, budget);
     // Research: keyless — DuckDuckGo snippets synthesized by the active brain.
     const research = async (query: string): Promise<string> => {
@@ -1109,7 +1119,7 @@ export const useRobert = () => {
             /* keep the filtered line */
           }
         }
-        line = capToFormat(normalizeBullets(h.text), cap);
+        line = capToFormat(normalizeBullets(h.text), effectiveCap);
       }
       if (!wait && line) {
         // Keep the answer even if a newer question superseded this request:
@@ -1149,7 +1159,10 @@ export const useRobert = () => {
       if (id === reqIdRef.current) setError(String(e));
       track("error", { where: "suggest", msg: String(e).slice(0, 200) });
     } finally {
-      if (id === reqIdRef.current) setSuggesting(false);
+      if (id === reqIdRef.current) {
+        setSuggesting(false);
+        suggestingRef.current = false;
+      }
     }
   }, [brainCall, logEvent]);
 
@@ -1181,6 +1194,14 @@ export const useRobert = () => {
       lastHoldMsRef.current = holdMs;
       holdTimerRef.current = setTimeout(() => {
         holdTimerRef.current = null;
+        // One answer at a time. If a suggestion is still generating, do NOT start
+        // a second for the same turn (that stacked 5 to 7 near-identical answers).
+        // Wait it out and retry once it settles; the segment is cleared after it
+        // answers, so this only re-fires on genuinely new speech.
+        if (suggestingRef.current) {
+          armHold(turnText, 400);
+          return;
+        }
         suggest(turnText);
       }, holdMs);
     };
