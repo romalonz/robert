@@ -291,6 +291,27 @@ const DEFAULT_ANSWER_FORMAT = `- Open with ONE short intro sentence that frames 
 - Then 2 to 4 short bullets with the specific facts, numbers, and names from my notes that answer what was asked. Keep the detail that makes it usable; cut the padding.
 - Keep it tight and speakable, about 400 characters. ONLY a "walk me through" or "tell me about" question runs longer, up to about 900 characters. Natural, as if I thought of it myself.`;
 
+// Instant "thinking out loud" lead-ins the user can say the moment a question
+// lands, to buy the 2 to 4 seconds the real answer needs to generate. Shown only
+// when the answer is not near-instant, then replaced by the streamed answer.
+// Rotated (recentStallsRef) so it never sounds repetitive or obviously stalling.
+const STALL_DIRECT = [
+  "Yeah, good question. Let me give you the real version.",
+  "Right, a couple of things come to mind there.",
+  "Sure, let me think that through for a second.",
+  "Okay, so I've actually run into this before.",
+  "Good one. Let me give you the honest take.",
+  "So, from what I've done, a few things stand out.",
+  "Yeah, let me put that the right way.",
+];
+const STALL_NARRATIVE = [
+  "Sure, there's a good example that fits.",
+  "Yeah, let me walk you through one.",
+  "Okay, one specific case comes to mind.",
+  "Let me take you through how that went.",
+  "Good question. Let me give you the story on that.",
+];
+
 const CONVERT_SYSTEM = `You convert one source document into ONE Markdown knowledge file for Robert, a live meeting copilot that reads the file during a call and quotes it. Output ONLY the Markdown file: no commentary, no code fences, no preamble.
 
 First decide the document type, then use the matching structure.
@@ -714,6 +735,11 @@ export const useRobert = () => {
   // never start a second one for the same turn while one is in flight (that is
   // what stacked 5 to 7 near-identical answers that flickered past mid-question).
   const suggestingRef = useRef(false);
+  // Instant "thinking out loud" stall shown while the real answer generates.
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallActiveRef = useRef(false); // a stall (not a real answer) is on screen
+  const lastAnswerRef = useRef(""); // last REAL answer shown, to revert a stall on WAIT
+  const recentStallsRef = useRef<string[]>([]); // avoid reusing a stall phrase
   // id of the request whose answer currently owns the main display. Answers
   // display monotonically: a finished answer newer than what is shown takes
   // the screen NOW, even while an even-newer request is still generating —
@@ -958,6 +984,33 @@ export const useRobert = () => {
     // a character cap means fewer tokens: ~3.5 chars per token plus slack
     const budget = Math.min(480, Math.ceil(effectiveCap / 3.5) + 60);
     const askBrain = (user: string) => brainCall(composeGrounding(), user, budget);
+
+    // Instant "thinking out loud" stall: if the real answer has not begun
+    // streaming within ~380ms, show a short, varied lead-in the user can say
+    // aloud to buy time. Fast (cloud) answers beat the timer and skip it; slow
+    // (local) answers get covered. Replaced when real content streams in (reveal)
+    // and reverted if the brain says WAIT (finally). Skipped for greetings, whose
+    // answers are already instant.
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
+    stallActiveRef.current = false;
+    const isGreetingTurn =
+      askedText.length < 16 ||
+      /\b(hi|hey|hello|how are you|nice to meet|good (morning|afternoon|evening))\b/i.test(askedText);
+    if (!isGreetingTurn) {
+      const isNarr = isNarrativeQuestion(askedText);
+      stallTimerRef.current = setTimeout(() => {
+        stallTimerRef.current = null;
+        if (id !== reqIdRef.current || id < displayedIdRef.current) return;
+        const pool = isNarr ? STALL_NARRATIVE : STALL_DIRECT;
+        const recent = recentStallsRef.current;
+        const fresh = pool.filter((p) => !recent.includes(p));
+        const choose = fresh.length ? fresh : pool;
+        const phrase = choose[Math.floor(Math.random() * choose.length)];
+        recentStallsRef.current = [phrase, ...recent].slice(0, 4);
+        setSuggestion(phrase);
+        stallActiveRef.current = true;
+      }, 380);
+    }
     // Research: keyless — DuckDuckGo snippets synthesized by the active brain.
     const research = async (query: string): Promise<string> => {
       try {
@@ -1078,6 +1131,9 @@ export const useRobert = () => {
         if (t.length < 10 && !t.includes("\n")) return; // not enough to judge yet
         if (/^\s*(WAIT\b|NEEDS_RESEARCH\s*:)/i.test(t)) return; // control reply, keep thinking
         if (id < displayedIdRef.current) return; // a newer answer already owns the screen
+        // real content is here: drop the stall and let the answer take over
+        if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
+        stallActiveRef.current = false;
         setSuggestion(t);
       };
       let first = (
@@ -1136,6 +1192,9 @@ export const useRobert = () => {
         // Monotonic display: newest finished answer takes the screen now.
         if (id > displayedIdRef.current) {
           displayedIdRef.current = id;
+          if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
+          stallActiveRef.current = false;
+          lastAnswerRef.current = line;
           setSuggestion(line);
           setLastRoute(route);
         }
@@ -1162,6 +1221,13 @@ export const useRobert = () => {
       if (id === reqIdRef.current) {
         setSuggesting(false);
         suggestingRef.current = false;
+        if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
+        if (stallActiveRef.current) {
+          // a stall was showing but no real answer replaced it (WAIT / aside):
+          // revert to the last real answer so no filler is left hanging.
+          setSuggestion(lastAnswerRef.current);
+          stallActiveRef.current = false;
+        }
       }
     }
   }, [brainCall, logEvent]);
