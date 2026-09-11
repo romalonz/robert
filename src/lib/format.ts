@@ -49,12 +49,26 @@ export function isNarrativeQuestion(q: string): boolean {
   return NARRATIVE_Q_RE.test(q);
 }
 
+/// Technical / conceptual questions that need real depth, not a one-liner:
+/// "explain X", "the difference between A and B", "how does X work", "how would
+/// you design/architect/approach", "compare", "trade-offs", "what are the
+/// components/steps". These deserve the extended cap the same as a narrative,
+/// because a 380-char answer to a technical interview question reads as shallow.
+/// Raising the ceiling never forces length (the model still self-sizes); it only
+/// stops a real technical answer from being truncated.
+export const DEPTH_Q_RE =
+  /\b(explain\b|difference(?:s)? between|compare\b|contrast\b|trade[- ]?offs?|pros and cons|architecture|\barchitect\b|deep[- ]?dive|break (?:it|this|that) down|how (?:do|does) .{0,40}?\bworks?\b|how would you (?:build|design|architect|approach|structure|scale|debug|fix|optimi[sz]e|implement|handle the)|design (?:a|an|the|your|me a)\b|what (?:is|are) the (?:difference|components?|steps|stages|parts|pieces|trade[- ]?offs?)|(?:walk|take|run) (?:me|us) through the)\b/i;
+
+export function isDepthQuestion(q: string): boolean {
+  return DEPTH_Q_RE.test(q);
+}
+
 /// The character cap that applies to THIS question: the narrative cap when
 /// the question asks for a story (falling back to three times the default),
 /// otherwise the default.
 export function capFor(fmt: AnswerFormat | null, question: string): number | null {
   if (!fmt) return null;
-  if (isNarrativeQuestion(question)) {
+  if (isNarrativeQuestion(question) || isDepthQuestion(question)) {
     if (fmt.extendedChars) return fmt.extendedChars;
     return fmt.maxChars ? fmt.maxChars * 3 : null;
   }

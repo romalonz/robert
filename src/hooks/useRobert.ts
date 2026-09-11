@@ -18,7 +18,7 @@ import {
   ConvKind,
 } from "@/lib/conversation";
 import { parseAliases } from "@/lib/group";
-import { extractAnswerFormat, capToFormat, normalizeBullets, capFor, isNarrativeQuestion } from "@/lib/format";
+import { extractAnswerFormat, capToFormat, normalizeBullets, capFor, isNarrativeQuestion, isDepthQuestion } from "@/lib/format";
 import { VOICES, VOICE_MAX } from "@/lib/voices";
 
 // Conversation type, which tunes how eagerly Robert speaks.
@@ -980,7 +980,7 @@ export const useRobert = () => {
     // character limit. Uncapped answers ran 550 to 900 chars and buried the
     // point; default to a tight ceiling (a lead line plus a couple of short
     // bullets), with more room only for narrative "walk me through" questions.
-    const effectiveCap = cap ?? (isNarrativeQuestion(askedText) ? 720 : 380);
+    const effectiveCap = cap ?? ((isNarrativeQuestion(askedText) || isDepthQuestion(askedText)) ? 800 : 380);
     // a character cap means fewer tokens: ~3.5 chars per token plus slack
     const budget = Math.min(480, Math.ceil(effectiveCap / 3.5) + 60);
     const askBrain = (user: string) => brainCall(composeGrounding(), user, budget);
