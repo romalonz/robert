@@ -1052,6 +1052,10 @@ export default function Robert() {
             <input type="checkbox" checked={r.recordMeetings} onChange={(e) => r.setRecordMeetings(e.target.checked)} />
             record meetings (transcript + takeaways, local only)
           </label>
+          <label className="h-7 flex items-center gap-1.5 text-[11px] text-neutral-300 cursor-pointer" title="Also capture your microphone as a second, on-device stream and log your own spoken answers as 'me' turns. Off by default; the other party's system audio is always captured either way. macOS only. Takes effect on the next Start.">
+            <input type="checkbox" checked={r.micCapture} onChange={(e) => r.setMicCapture(e.target.checked)} />
+            capture my mic too (log my own answers as “me”, macOS only)
+          </label>
           {r.telemetryOn && (
             <label className="basis-full flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer" title="Anonymous usage and error events only — never transcripts, notes, meeting knowledge, names, or keys.">
               <input type="checkbox" checked={r.telemetryOn} onChange={(e) => r.setTelemetry(e.target.checked)} />

@@ -612,6 +612,14 @@ export const useRobert = () => {
   const [recordMeetings, setRecordMeetings] = useState<boolean>(
     () => localStorage.getItem("robert.recordMeetings") !== "0"
   );
+  // Microphone capture (macOS only, opt-in, OFF by default): also record MY own
+  // spoken answers as "me" turns via the engine's --mic stream. When off, the
+  // engine captures only the other party's system audio, exactly as before.
+  const [micCapture, setMicCapture] = useState<boolean>(
+    () => localStorage.getItem("robert.micCapture") === "1"
+  );
+  const micCaptureRef = useRef(micCapture);
+  micCaptureRef.current = micCapture;
   // What Robert learned from past meetings is always used: non-negotiable.
   const useMemory = true;
   const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
@@ -782,6 +790,10 @@ export const useRobert = () => {
   useEffect(
     () => localStorage.setItem("robert.recordMeetings", recordMeetings ? "1" : "0"),
     [recordMeetings]
+  );
+  useEffect(
+    () => localStorage.setItem("robert.micCapture", micCapture ? "1" : "0"),
+    [micCapture]
   );
 
   useEffect(() => localStorage.setItem(LS.localModel, localModel), [localModel]);
@@ -1285,6 +1297,14 @@ export const useRobert = () => {
           break;
         case "partial": {
           const p = msg.text || "";
+          // My own live speech from the mic (--mic stream). Keep "the last thing
+          // I said" fresh for grounding, but NEVER treat it as the other party's
+          // floor (no setPartial/clearHold) and never trigger a suggestion. The
+          // me-final records it; me-partials stay ephemeral like them-partials.
+          if (msg.who === "me") {
+            if (p.trim()) myLastLineRef.current = p.trim();
+            break;
+          }
           setPartial(p);
           partialRef.current = p;
           // speech resumed: the floor was NOT yielded, keep accumulating
@@ -1292,9 +1312,26 @@ export const useRobert = () => {
           break;
         }
         case "final": {
+          const t = (msg.text || "").trim();
+          // My own completed turn from the mic (--mic stream). Record it as my
+          // side of the dialogue and stand by: my talking is never a question to
+          // answer, so it must NOT trigger a suggestion. Do not touch the other
+          // party's live partial. Everything without who:"me" keeps its exact
+          // current path below.
+          if (msg.who === "me") {
+            if (t) {
+              myLastLineRef.current = t;
+              historyRef.current = [
+                ...historyRef.current,
+                { who: "me" as const, text: t },
+              ].slice(-12);
+              setLastRoute("delivered");
+              logEvent({ who: "me", text: t, mic: true });
+            }
+            break;
+          }
           setPartial("");
           partialRef.current = "";
-          const t = (msg.text || "").trim();
           // Ignore pure backchannel/filler ("okay", "mm-hmm") and Whisper
           // silence hallucinations so they never wipe the real answer. But
           // re-arm a pending answer the preceding partials canceled.
@@ -1556,6 +1593,9 @@ export const useRobert = () => {
           silenceMs: 900,
           // Windows: which output device's loopback to capture (null = default).
           outputDevice: outputDeviceRef.current || null,
+          // macOS: also capture MY microphone as a second stream (opt-in). When
+          // false the engine runs system-audio only, exactly as before.
+          mic: micCaptureRef.current,
         });
         setRunning(true);
         track("meeting_start", { provider: providerRef.current, mode: modeRef.current });
@@ -2316,6 +2356,8 @@ export const useRobert = () => {
     setupVisionModel,
     recordMeetings,
     setRecordMeetings,
+    micCapture,
+    setMicCapture,
     useMemory,
     meetings,
     refreshMeetings,

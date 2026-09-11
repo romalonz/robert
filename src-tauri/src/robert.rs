@@ -79,14 +79,17 @@ pub async fn robert_start(
     model_folder: Option<String>,
     silence_ms: Option<i64>,
     output_device: Option<String>,
+    mic: Option<bool>,
 ) -> Result<(), String> {
     kill_existing(&state);
 
     // Windows: run the in-process engine (WASAPI loopback + whisper.cpp)
     // instead of the macOS Swift sidecar. Same events, same frontend.
+    // Microphone capture is a macOS-only feature for now (the Swift sidecar);
+    // the Windows loopback path ignores `mic` (noted as a follow-up).
     #[cfg(target_os = "windows")]
     {
-        let _ = (target_bundle, target_pid, model_folder, silence_ms);
+        let _ = (target_bundle, target_pid, model_folder, silence_ms, mic);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         *state.win_stop.lock().unwrap() = Some(stop.clone());
         let app2 = app.clone();
@@ -124,6 +127,12 @@ pub async fn robert_start(
     if let Some(ms) = silence_ms {
         args.push("--silence-ms".into());
         args.push(ms.to_string());
+    }
+    // Opt-in microphone capture: adds a second, isolated stream that emits the
+    // user's own turns tagged who:"me". Off unless the app asks for it, so the
+    // default (system-audio only) behavior is unchanged.
+    if mic.unwrap_or(false) {
+        args.push("--mic".into());
     }
 
     let (mut rx, child) = app
