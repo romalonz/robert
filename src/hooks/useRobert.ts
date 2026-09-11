@@ -748,6 +748,10 @@ export const useRobert = () => {
   const stallActiveRef = useRef(false); // a stall (not a real answer) is on screen
   const lastAnswerRef = useRef(""); // last REAL answer shown, to revert a stall on WAIT
   const recentStallsRef = useRef<string[]>([]); // avoid reusing a stall phrase
+  // Once a real answer is on the teleprompter it is LOCKED: nothing changes it
+  // (not streaming, not a late-completing extra generation) until a NEW question
+  // arrives. Cleared at the start of a new auto suggestion and on a manual Respond.
+  const frozenRef = useRef(false);
   // id of the request whose answer currently owns the main display. Answers
   // display monotonically: a finished answer newer than what is shown takes
   // the screen NOW, even while an even-newer request is still generating —
@@ -978,6 +982,9 @@ export const useRobert = () => {
     const id = ++reqIdRef.current;
     // keep the current answer on screen until a new one is ready (and on WAIT)
     suggestingRef.current = true;
+    // A new AUTO question unlocks the teleprompter so this answer can take over;
+    // a manual Respond (force) already cleared the lock in respondNow.
+    if (!force) frozenRef.current = false;
     setSuggesting(true);
     setError(null);
 
@@ -1012,7 +1019,7 @@ export const useRobert = () => {
       const isNarr = isNarrativeQuestion(askedText);
       stallTimerRef.current = setTimeout(() => {
         stallTimerRef.current = null;
-        if (id !== reqIdRef.current || id < displayedIdRef.current) return;
+        if (id !== reqIdRef.current || id < displayedIdRef.current || frozenRef.current) return;
         const pool = isNarr ? STALL_NARRATIVE : STALL_DIRECT;
         const recent = recentStallsRef.current;
         const fresh = pool.filter((p) => !recent.includes(p));
@@ -1142,7 +1149,7 @@ export const useRobert = () => {
         const t = buf.trimStart();
         if (t.length < 10 && !t.includes("\n")) return; // not enough to judge yet
         if (/^\s*(WAIT\b|NEEDS_RESEARCH\s*:)/i.test(t)) return; // control reply, keep thinking
-        if (id < displayedIdRef.current) return; // a newer answer already owns the screen
+        if (id < displayedIdRef.current || frozenRef.current) return; // a newer answer owns it, or the shown answer is locked
         // real content is here: drop the stall and let the answer take over
         if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
         stallActiveRef.current = false;
@@ -1177,7 +1184,10 @@ export const useRobert = () => {
         // Strip AI tells deterministically; if heavy patterns survive, ask
         // for ONE rewrite in plain spoken words (rare, cheap).
         let h = humanizeLine(line);
-        if (h.needsRewrite) {
+        // The rewrite is a SECOND full generation. On a local brain that doubles
+        // the wait for a live answer, so skip it there (the deterministic strip
+        // already ran); cloud brains are fast enough to afford the polish.
+        if (h.needsRewrite && providerRef.current !== "local") {
           try {
             const re = await askBrain(
               `Rewrite this exactly as I'd say it out loud to a colleague. Same facts and numbers, plain words, no opener, no corporate language, no "not just X but Y":\n${h.text}`
@@ -1202,13 +1212,17 @@ export const useRobert = () => {
         setAnswersGiven((n) => n + 1);
         logEvent({ who: "robert", text: line, route, asked: asked.slice(-200) });
         // Monotonic display: newest finished answer takes the screen now.
-        if (id > displayedIdRef.current) {
+        if (id > displayedIdRef.current && !frozenRef.current) {
           displayedIdRef.current = id;
           if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
           stallActiveRef.current = false;
           lastAnswerRef.current = line;
           setSuggestion(line);
           setLastRoute(route);
+          // Lock it: this answer stays on the teleprompter until a NEW question.
+          // A later-completing generation (e.g. from an extra Respond click) will
+          // not overwrite it.
+          frozenRef.current = true;
         }
       }
       if (id === reqIdRef.current) {
@@ -1246,6 +1260,10 @@ export const useRobert = () => {
 
   // Manual trigger: force a response to the last completed turn (human-in-the-loop).
   const respondNow = useCallback(() => {
+    // One answer at a time: while a suggestion is still generating, ignore extra
+    // Respond clicks so they do not stack several slow generations that each
+    // overwrite the last. The one in flight is already coming.
+    if (suggestingRef.current) return;
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
       holdTimerRef.current = null;
@@ -1257,6 +1275,8 @@ export const useRobert = () => {
       setError("Nothing captured yet to respond to.");
       return;
     }
+    // A deliberate Respond may replace a shown answer (the user asked for it).
+    frozenRef.current = false;
     suggest(full, true);
   }, [suggest]);
 
