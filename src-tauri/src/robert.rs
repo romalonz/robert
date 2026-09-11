@@ -35,6 +35,14 @@ fn kill_existing(state: &State<'_, RobertState>) {
     }
 }
 
+/// Kill the capture engine when the app exits, so it never orphans. Without
+/// this, quitting or replacing Robert leaves the robert-engine child reparented
+/// to launchd, still running WhisperKit on the browser audio for a dead parent.
+pub fn shutdown_engine(app: &AppHandle) {
+    let state = app.state::<RobertState>();
+    kill_existing(&state);
+}
+
 #[tauri::command]
 pub async fn robert_list_processes(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
     // Windows v1 captures the whole system output (WASAPI loopback), so the

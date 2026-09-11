@@ -288,8 +288,16 @@ pub fn run() {
     }
 
     builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| match event {
+            // Kill the capture engine on exit so it never orphans (reparents to
+            // launchd and keeps running WhisperKit for a dead parent).
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                robert::shutdown_engine(app_handle);
+            }
+            _ => {}
+        });
 }
 
 #[cfg(target_os = "macos")]
