@@ -20,6 +20,7 @@ import {
 import { parseAliases } from "@/lib/group";
 import { extractAnswerFormat, capToFormat, normalizeBullets, capFor, isNarrativeQuestion, isDepthQuestion } from "@/lib/format";
 import { VOICES, VOICE_MAX } from "@/lib/voices";
+import { parseRobertEvent, type RobertToken } from "@/lib/events";
 import {
   DEFAULT_VOICE,
   DEFAULT_RULES,
@@ -584,7 +585,7 @@ export const useRobert = () => {
       if (providerRef.current === "local") {
         let un: undefined | (() => void);
         try {
-          un = await listen<{ id: number; text: string }>("robert://token", (e) => {
+          un = await listen<RobertToken>("robert://token", (e) => {
             if (e.payload && e.payload.id === reqId) onToken(e.payload.text || "");
           });
           return await invoke<string>("robert_suggest_local_stream", {
@@ -948,24 +949,20 @@ export const useRobert = () => {
       }, holdMs);
     };
     const unEvent = listen<string>("robert://event", (e) => {
-      let msg: any;
-      try {
-        msg = JSON.parse(e.payload);
-      } catch {
-        return;
-      }
-      switch (msg.type) {
+      const ev = parseRobertEvent(e.payload);
+      if (!ev) return;
+      switch (ev.type) {
         case "status":
-          setStatus(msg.stage);
-          if (msg.stage === "ready") setError(null);
+          setStatus(ev.stage);
+          if (ev.stage === "ready") setError(null);
           break;
         case "partial": {
-          const p = msg.text || "";
+          const p = ev.text || "";
           // My own live speech from the mic (--mic stream). Keep "the last thing
           // I said" fresh for grounding, but NEVER treat it as the other party's
           // floor (no setPartial/clearHold) and never trigger a suggestion. The
           // me-final records it; me-partials stay ephemeral like them-partials.
-          if (msg.who === "me") {
+          if (ev.who === "me") {
             if (p.trim()) myLastLineRef.current = p.trim();
             break;
           }
@@ -976,13 +973,13 @@ export const useRobert = () => {
           break;
         }
         case "final": {
-          const t = (msg.text || "").trim();
+          const t = (ev.text || "").trim();
           // My own completed turn from the mic (--mic stream). Record it as my
           // side of the dialogue and stand by: my talking is never a question to
           // answer, so it must NOT trigger a suggestion. Do not touch the other
           // party's live partial. Everything without who:"me" keeps its exact
           // current path below.
-          if (msg.who === "me") {
+          if (ev.who === "me") {
             if (t) {
               myLastLineRef.current = t;
               historyRef.current = [
@@ -1077,7 +1074,7 @@ export const useRobert = () => {
           break;
         }
         case "error":
-          setError(msg.message || "Engine error.");
+          setError(ev.message || "Engine error.");
           break;
         default:
           break;

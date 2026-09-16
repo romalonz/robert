@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+pub(crate) mod events;
 mod meetings;
 mod notes_ctx;
 mod providers;
