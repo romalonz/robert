@@ -1,6 +1,6 @@
 # Robert — build & run from source
 
-Robert is a local-first meeting copilot (Tauri + Rust + React). To run it from a fresh clone:
+Robert is a local-first AI computer companion that can see, hear, remember, and act across your desktop — meetings are one skill (Tauri + Rust + React). To run it from a fresh clone:
 
 ```bash
 git clone <this repo>
