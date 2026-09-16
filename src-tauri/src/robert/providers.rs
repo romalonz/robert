@@ -1,139 +1,13 @@
 // Providers: the three chat brains (OpenAI-compatible/DeepSeek, Anthropic,
 // local Ollama) and the three vision brains, plus the local-brain sizing
 // helpers (num_ctx / keep_alive / low_ram / error mapping) and prewarming.
-// Moved verbatim out of the former robert.rs; command names and signatures are
-// unchanged.
-
-#[derive(serde::Deserialize)]
-struct DsResp {
-    choices: Vec<DsChoice>,
-}
-#[derive(serde::Deserialize)]
-struct DsChoice {
-    message: DsMsg,
-}
-#[derive(serde::Deserialize)]
-struct DsMsg {
-    content: String,
-}
-
-/// Cloud brain over any OpenAI-compatible chat API (DeepSeek, OpenAI, Groq,
-/// Gemini's OpenAI endpoint, OpenRouter, or a custom base URL). Non-streaming.
-/// The grounding goes in `system`, the turn in `user`.
-#[tauri::command]
-pub async fn robert_suggest(
-    api_key: String,
-    model: String,
-    system: String,
-    user: String,
-    base_url: Option<String>,
-    max_tokens: Option<u64>,
-) -> Result<String, String> {
-    if api_key.trim().is_empty() {
-        return Err("missing API key for the selected provider".into());
-    }
-    let base = base_url
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "https://api.deepseek.com/v1".into());
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "model": if model.is_empty() { "deepseek-chat" } else { &model },
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ],
-        "stream": false,
-        "max_tokens": max_tokens.unwrap_or(320)
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let res = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        let code = res.status();
-        let txt = res.text().await.unwrap_or_default();
-        return Err(format!("cloud brain {}: {}", code, txt));
-    }
-    let parsed: DsResp = res.json().await.map_err(|e| e.to_string())?;
-    parsed
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .ok_or_else(|| "empty response from the cloud brain".to_string())
-}
-
-/// Anthropic Claude brain (native Messages API — not OpenAI-compatible).
-/// No temperature/top_p (removed on current Claude models); adaptive thinking
-/// is the model default, `effort: low` keeps live-call latency down. Checks
-/// `stop_reason` for refusals before reading content.
-#[tauri::command]
-pub async fn robert_suggest_anthropic(
-    api_key: String,
-    model: String,
-    system: String,
-    user: String,
-    max_tokens: Option<u64>,
-) -> Result<String, String> {
-    if api_key.trim().is_empty() {
-        return Err("missing Anthropic API key".into());
-    }
-    let body = serde_json::json!({
-        "model": if model.is_empty() { "claude-opus-5" } else { &model },
-        "max_tokens": max_tokens.unwrap_or(640),
-        "output_config": {"effort": "low"},
-        "system": system,
-        "messages": [
-            {"role": "user", "content": user}
-        ]
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let res = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key.trim())
-        .header("anthropic-version", "2023-06-01")
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        let code = res.status();
-        let txt = res.text().await.unwrap_or_default();
-        return Err(format!("Claude {}: {}", code, txt));
-    }
-    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    if v.get("stop_reason").and_then(|s| s.as_str()) == Some("refusal") {
-        return Err("Claude declined this request (safety refusal).".into());
-    }
-    let text = v
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|blocks| {
-            blocks
-                .iter()
-                .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
-        })
-        .and_then(|b| b.get("text"))
-        .and_then(|t| t.as_str())
-        .map(|s| s.trim().to_string())
-        .ok_or_else(|| "empty response from Claude".to_string())?;
-    if text.is_empty() {
-        return Err("empty response from Claude".into());
-    }
-    Ok(text)
-}
+//
+// Phase B (rec 2/6) adds the `BrainProvider` seam: a trait with chat/stream/
+// vision that the app asks for suggestions through, without naming a provider.
+// Each provider owns its HTTP body; the #[tauri::command]s at the bottom are
+// thin wrappers that build the right impl and delegate. Command names,
+// signatures, defaults, error strings, and the robert://token stream are all
+// unchanged — this is a structure-only seam over the existing behavior.
 
 // GGUF (llama.cpp) build, NOT the -mlx tag: the MLX runner crashed with Metal
 // command-buffer/OOM failures under GPU contention (Brave video + Whisper +
@@ -275,9 +149,409 @@ async fn ollama_chat(
     Err("local brain: retry loop exhausted".into())
 }
 
+#[derive(serde::Deserialize)]
+struct DsResp {
+    choices: Vec<DsChoice>,
+}
+#[derive(serde::Deserialize)]
+struct DsChoice {
+    message: DsMsg,
+}
+#[derive(serde::Deserialize)]
+struct DsMsg {
+    content: String,
+}
+
+// ─── The brain seam ──────────────────────────────────────────────────────────
+/// A provider-agnostic brain. The app asks for `chat` / `stream` / `vision`
+/// without knowing whether the answer comes from DeepSeek, Claude, or a local
+/// Ollama model. The command wrappers below construct the right impl and
+/// delegate; the bodies here are the exact HTTP calls that used to live inline
+/// in each command.
+#[allow(async_fn_in_trait)]
+pub(crate) trait BrainProvider {
+    /// Non-streaming completion. Grounding in `system`, the turn in `user`.
+    async fn chat(&self, system: &str, user: &str, max_tokens: u64) -> Result<String, String>;
+
+    /// Vision completion over a base64 PNG.
+    async fn vision(
+        &self,
+        system: &str,
+        user: &str,
+        image_base64: &str,
+        max_tokens: u64,
+    ) -> Result<String, String>;
+
+    /// Streaming completion that emits `robert://token` as it generates and
+    /// returns the full text. Only the local brain streams tokens today; the
+    /// default delegates to a single `chat` call. Not reached on the live path
+    /// (the stream command builds `OllamaBrain`), so it changes no behavior.
+    async fn stream(
+        &self,
+        app: &tauri::AppHandle,
+        req_id: u64,
+        system: &str,
+        user: &str,
+        max_tokens: u64,
+    ) -> Result<String, String> {
+        let _ = (app, req_id);
+        self.chat(system, user, max_tokens).await
+    }
+}
+
+/// Cloud brain over any OpenAI-compatible chat API (DeepSeek, OpenAI, Groq,
+/// Gemini's OpenAI endpoint, OpenRouter, or a custom base URL).
+pub(crate) struct OpenAiCompatBrain {
+    pub api_key: String,
+    pub model: String,
+    pub base_url: Option<String>,
+}
+
+impl BrainProvider for OpenAiCompatBrain {
+    async fn chat(&self, system: &str, user: &str, max_tokens: u64) -> Result<String, String> {
+        if self.api_key.trim().is_empty() {
+            return Err("missing API key for the selected provider".into());
+        }
+        let base = self
+            .base_url
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://api.deepseek.com/v1".into());
+        let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": if self.model.is_empty() { "deepseek-chat" } else { &self.model },
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ],
+            "stream": false,
+            "max_tokens": max_tokens
+        });
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let res = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            let code = res.status();
+            let txt = res.text().await.unwrap_or_default();
+            return Err(format!("cloud brain {}: {}", code, txt));
+        }
+        let parsed: DsResp = res.json().await.map_err(|e| e.to_string())?;
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .ok_or_else(|| "empty response from the cloud brain".to_string())
+    }
+
+    async fn vision(
+        &self,
+        system: &str,
+        user: &str,
+        image_base64: &str,
+        max_tokens: u64,
+    ) -> Result<String, String> {
+        if self.api_key.trim().is_empty() { return Err("missing API key".into()); }
+        let base = self.base_url.clone().filter(|b| !b.trim().is_empty()).unwrap_or_else(|| "https://api.openai.com/v1".into());
+        let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": [
+                    {"type": "text", "text": user},
+                    {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", image_base64)}}
+                ]}
+            ]
+        });
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
+        let res = client.post(&url).bearer_auth(self.api_key.trim()).json(&body).send().await.map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            let code = res.status(); let txt = res.text().await.unwrap_or_default();
+            return Err(format!("vision {}: {}", code, txt));
+        }
+        let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        v.pointer("/choices/0/message/content").and_then(|c| c.as_str())
+            .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+            .ok_or_else(|| "empty vision response".to_string())
+    }
+}
+
+/// Anthropic Claude brain (native Messages API — not OpenAI-compatible).
+pub(crate) struct AnthropicBrain {
+    pub api_key: String,
+    pub model: String,
+}
+
+impl BrainProvider for AnthropicBrain {
+    /// No temperature/top_p (removed on current Claude models); adaptive thinking
+    /// is the model default, `effort: low` keeps live-call latency down. Checks
+    /// `stop_reason` for refusals before reading content.
+    async fn chat(&self, system: &str, user: &str, max_tokens: u64) -> Result<String, String> {
+        if self.api_key.trim().is_empty() {
+            return Err("missing Anthropic API key".into());
+        }
+        let body = serde_json::json!({
+            "model": if self.model.is_empty() { "claude-opus-5" } else { &self.model },
+            "max_tokens": max_tokens,
+            "output_config": {"effort": "low"},
+            "system": system,
+            "messages": [
+                {"role": "user", "content": user}
+            ]
+        });
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let res = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", self.api_key.trim())
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            let code = res.status();
+            let txt = res.text().await.unwrap_or_default();
+            return Err(format!("Claude {}: {}", code, txt));
+        }
+        let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        if v.get("stop_reason").and_then(|s| s.as_str()) == Some("refusal") {
+            return Err("Claude declined this request (safety refusal).".into());
+        }
+        let text = v
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|blocks| {
+                blocks
+                    .iter()
+                    .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+            })
+            .and_then(|b| b.get("text"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.trim().to_string())
+            .ok_or_else(|| "empty response from Claude".to_string())?;
+        if text.is_empty() {
+            return Err("empty response from Claude".into());
+        }
+        Ok(text)
+    }
+
+    /// Anthropic vision: an image content block (base64 source) + a text block.
+    async fn vision(
+        &self,
+        system: &str,
+        user: &str,
+        image_base64: &str,
+        max_tokens: u64,
+    ) -> Result<String, String> {
+        if self.api_key.trim().is_empty() { return Err("missing Anthropic API key".into()); }
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
+                    {"type": "text", "text": user}
+                ]}
+            ]
+        });
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
+        let res = client.post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", self.api_key.trim())
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body).send().await.map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            let code = res.status(); let txt = res.text().await.unwrap_or_default();
+            return Err(format!("vision {}: {}", code, txt));
+        }
+        let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        v.pointer("/content/0/text").and_then(|c| c.as_str())
+            .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+            .ok_or_else(|| "empty vision response".to_string())
+    }
+}
+
+/// Local brain via Ollama native /api/chat. The DEFAULT brain, no API key.
+pub(crate) struct OllamaBrain {
+    pub model: String,
+}
+
+impl BrainProvider for OllamaBrain {
+    /// Non-streaming, thinking disabled. Grounding in the system message, the
+    /// turn in the user message — same shape as DeepSeek.
+    async fn chat(&self, system: &str, user: &str, max_tokens: u64) -> Result<String, String> {
+        let model = if self.model.trim().is_empty() {
+            LOCAL_DEFAULT_MODEL.to_string()
+        } else {
+            self.model.clone()
+        };
+        ollama_chat(&model, system, user, max_tokens).await
+    }
+
+    /// Local vision model via Ollama (qwen2.5vl etc.): /api/chat with an images
+    /// array (raw base64, no data-URI prefix).
+    async fn vision(
+        &self,
+        system: &str,
+        user: &str,
+        image_base64: &str,
+        max_tokens: u64,
+    ) -> Result<String, String> {
+        let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
+        let url = format!("{}/api/chat", base);
+        let body = serde_json::json!({
+            "model": if self.model.trim().is_empty() { "qwen2.5vl:7b" } else { &self.model },
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user, "images": [image_base64]}
+            ],
+            "stream": false,
+            "keep_alive": local_keep_alive(),
+            "options": {"num_ctx": if low_ram() { 4096 } else { 8192 }, "num_predict": max_tokens, "temperature": 0.2}
+        });
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(240))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let res = client.post(&url).json(&body).send().await
+            .map_err(|e| format!("local vision unreachable at {}: {} (is Ollama running?)", base, e))?;
+        if !res.status().is_success() {
+            let code = res.status();
+            let txt = res.text().await.unwrap_or_default();
+            if txt.contains("model") && (txt.contains("not found") || txt.contains("try pulling")) {
+                return Err(format!("vision model not installed. In settings, set a vision model (e.g. qwen2.5vl:7b) and click Set up. ({})", code));
+            }
+            return Err(format!("local vision {}: {}", code, txt));
+        }
+        let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str())
+            .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+            .ok_or_else(|| "empty response from local vision model".to_string())
+    }
+
+    /// Streaming local brain: emits each token to the frontend as it is
+    /// generated (event "robert://token", tagged with `req_id`) and returns the
+    /// full text at the end.
+    async fn stream(
+        &self,
+        app: &tauri::AppHandle,
+        req_id: u64,
+        system: &str,
+        user: &str,
+        max_tokens: u64,
+    ) -> Result<String, String> {
+        use tauri::Emitter;
+        let model = if self.model.trim().is_empty() { LOCAL_DEFAULT_MODEL.to_string() } else { self.model.clone() };
+        let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
+        let url = format!("{}/api/chat", base);
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ],
+            "stream": true,
+            "think": false,
+            "keep_alive": local_keep_alive(),
+            "options": {
+                "num_ctx": local_num_ctx(system),
+                "num_predict": max_tokens,
+                "temperature": 0.6
+            }
+        });
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(240))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let res = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("local brain unreachable at {}: {} (is Ollama running?)", base, e))?;
+        if !res.status().is_success() {
+            let code = res.status();
+            let txt = res.text().await.unwrap_or_default();
+            return Err(local_error_message(code, &txt));
+        }
+        use futures_util::StreamExt;
+        let mut stream = res.bytes_stream();
+        let mut buf = String::new();
+        let mut full = String::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(nl) = buf.find('\n') {
+                let line = buf[..nl].trim().to_string();
+                buf = buf[nl + 1..].to_string();
+                if line.is_empty() { continue; }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(tok) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+                        if !tok.is_empty() {
+                            full.push_str(tok);
+                            let _ = app.emit("robert://token", serde_json::json!({"id": req_id, "text": full}));
+                        }
+                    }
+                    if v.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                        let _ = app.emit("robert://token", serde_json::json!({"id": req_id, "text": full, "done": true}));
+                    }
+                }
+            }
+        }
+        Ok(full.trim().to_string())
+    }
+}
+
+// ─── Command wrappers (thin; identical surface + outputs) ────────────────────
+
+/// Cloud brain over any OpenAI-compatible chat API. Non-streaming.
+#[tauri::command]
+pub async fn robert_suggest(
+    api_key: String,
+    model: String,
+    system: String,
+    user: String,
+    base_url: Option<String>,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    OpenAiCompatBrain { api_key, model, base_url }
+        .chat(&system, &user, max_tokens.unwrap_or(320))
+        .await
+}
+
+/// Anthropic Claude brain (native Messages API — not OpenAI-compatible).
+#[tauri::command]
+pub async fn robert_suggest_anthropic(
+    api_key: String,
+    model: String,
+    system: String,
+    user: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    AnthropicBrain { api_key, model }
+        .chat(&system, &user, max_tokens.unwrap_or(640))
+        .await
+}
+
 /// Local brain (via Ollama native /api/chat, non-streaming, thinking disabled).
-/// This is the DEFAULT brain. No API key needed. The grounding goes in the
-/// system message, the turn in the user message — same shape as DeepSeek.
+/// This is the DEFAULT brain. No API key needed.
 #[tauri::command]
 pub async fn robert_suggest_local(
     model: String,
@@ -285,12 +559,73 @@ pub async fn robert_suggest_local(
     user: String,
     max_tokens: Option<u64>,
 ) -> Result<String, String> {
-    let model = if model.trim().is_empty() {
-        LOCAL_DEFAULT_MODEL.to_string()
-    } else {
-        model
-    };
-    ollama_chat(&model, &system, &user, max_tokens.unwrap_or(320)).await
+    OllamaBrain { model }
+        .chat(&system, &user, max_tokens.unwrap_or(320))
+        .await
+}
+
+/// ── Vision: solve a screenshot of a technical problem ──────────────────────
+/// Local vision model via Ollama (qwen2.5vl etc.).
+#[tauri::command]
+pub async fn robert_vision_local(
+    model: String,
+    system: String,
+    user: String,
+    image_base64: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    OllamaBrain { model }
+        .vision(&system, &user, &image_base64, max_tokens.unwrap_or(700))
+        .await
+}
+
+/// OpenAI-compatible vision: image_url with a data URI in the content array.
+#[tauri::command]
+pub async fn robert_vision_openai(
+    api_key: String,
+    model: String,
+    system: String,
+    user: String,
+    image_base64: String,
+    base_url: Option<String>,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    OpenAiCompatBrain { api_key, model, base_url }
+        .vision(&system, &user, &image_base64, max_tokens.unwrap_or(700))
+        .await
+}
+
+/// Anthropic vision: an image content block (base64 source) + a text block.
+#[tauri::command]
+pub async fn robert_vision_anthropic(
+    api_key: String,
+    model: String,
+    system: String,
+    user: String,
+    image_base64: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    AnthropicBrain { api_key, model }
+        .vision(&system, &user, &image_base64, max_tokens.unwrap_or(700))
+        .await
+}
+
+/// Streaming local brain: same call as robert_suggest_local but emits each
+/// token to the frontend as it is generated (event "robert://token", tagged
+/// with `req_id`). Returns the full text at the end. Non-streaming callers
+/// (cloud, rewrite, research) keep using robert_suggest_local.
+#[tauri::command]
+pub async fn robert_suggest_local_stream(
+    app: tauri::AppHandle,
+    req_id: u64,
+    model: String,
+    system: String,
+    user: String,
+    max_tokens: Option<u64>,
+) -> Result<String, String> {
+    OllamaBrain { model }
+        .stream(&app, req_id, &system, &user, max_tokens.unwrap_or(320))
+        .await
 }
 
 /// Read an image from the clipboard as base64 PNG. Needs NO screen-recording
@@ -312,200 +647,6 @@ pub fn robert_clipboard_image() -> Result<String, String> {
         .write_image(&img.bytes, w, h, ColorType::Rgba8.into())
         .map_err(|e| format!("encode failed: {e}"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png))
-}
-
-/// ── Vision: solve a screenshot of a technical problem ──────────────────────
-/// Local vision model via Ollama (qwen2.5vl etc.): /api/chat with an images
-/// array (raw base64, no data-URI prefix).
-#[tauri::command]
-pub async fn robert_vision_local(
-    model: String,
-    system: String,
-    user: String,
-    image_base64: String,
-    max_tokens: Option<u64>,
-) -> Result<String, String> {
-    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
-    let url = format!("{}/api/chat", base);
-    let body = serde_json::json!({
-        "model": if model.trim().is_empty() { "qwen2.5vl:7b" } else { &model },
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user, "images": [image_base64]}
-        ],
-        "stream": false,
-        "keep_alive": local_keep_alive(),
-        "options": {"num_ctx": if low_ram() { 4096 } else { 8192 }, "num_predict": max_tokens.unwrap_or(700), "temperature": 0.2}
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(240))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let res = client.post(&url).json(&body).send().await
-        .map_err(|e| format!("local vision unreachable at {}: {} (is Ollama running?)", base, e))?;
-    if !res.status().is_success() {
-        let code = res.status();
-        let txt = res.text().await.unwrap_or_default();
-        if txt.contains("model") && (txt.contains("not found") || txt.contains("try pulling")) {
-            return Err(format!("vision model not installed. In settings, set a vision model (e.g. qwen2.5vl:7b) and click Set up. ({})", code));
-        }
-        return Err(format!("local vision {}: {}", code, txt));
-    }
-    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str())
-        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-        .ok_or_else(|| "empty response from local vision model".to_string())
-}
-
-/// OpenAI-compatible vision: image_url with a data URI in the content array.
-#[tauri::command]
-pub async fn robert_vision_openai(
-    api_key: String,
-    model: String,
-    system: String,
-    user: String,
-    image_base64: String,
-    base_url: Option<String>,
-    max_tokens: Option<u64>,
-) -> Result<String, String> {
-    if api_key.trim().is_empty() { return Err("missing API key".into()); }
-    let base = base_url.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| "https://api.openai.com/v1".into());
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": max_tokens.unwrap_or(700),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": [
-                {"type": "text", "text": user},
-                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", image_base64)}}
-            ]}
-        ]
-    });
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
-    let res = client.post(&url).bearer_auth(api_key.trim()).json(&body).send().await.map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        let code = res.status(); let txt = res.text().await.unwrap_or_default();
-        return Err(format!("vision {}: {}", code, txt));
-    }
-    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    v.pointer("/choices/0/message/content").and_then(|c| c.as_str())
-        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-        .ok_or_else(|| "empty vision response".to_string())
-}
-
-/// Anthropic vision: an image content block (base64 source) + a text block.
-#[tauri::command]
-pub async fn robert_vision_anthropic(
-    api_key: String,
-    model: String,
-    system: String,
-    user: String,
-    image_base64: String,
-    max_tokens: Option<u64>,
-) -> Result<String, String> {
-    if api_key.trim().is_empty() { return Err("missing Anthropic API key".into()); }
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": max_tokens.unwrap_or(700),
-        "system": system,
-        "messages": [
-            {"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
-                {"type": "text", "text": user}
-            ]}
-        ]
-    });
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
-    let res = client.post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key.trim())
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body).send().await.map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        let code = res.status(); let txt = res.text().await.unwrap_or_default();
-        return Err(format!("vision {}: {}", code, txt));
-    }
-    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    v.pointer("/content/0/text").and_then(|c| c.as_str())
-        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-        .ok_or_else(|| "empty vision response".to_string())
-}
-
-/// Streaming local brain: same call as robert_suggest_local but emits each
-/// token to the frontend as it is generated (event "robert://token", tagged
-/// with `req_id`), so a long answer appears progressively instead of after the
-/// whole generation. Returns the full text at the end. Non-streaming callers
-/// (cloud, rewrite, research) keep using robert_suggest_local.
-#[tauri::command]
-pub async fn robert_suggest_local_stream(
-    app: tauri::AppHandle,
-    req_id: u64,
-    model: String,
-    system: String,
-    user: String,
-    max_tokens: Option<u64>,
-) -> Result<String, String> {
-    use tauri::Emitter;
-    let model = if model.trim().is_empty() { LOCAL_DEFAULT_MODEL.to_string() } else { model };
-    let base = std::env::var("ROBERT_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
-    let url = format!("{}/api/chat", base);
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ],
-        "stream": true,
-        "think": false,
-        "keep_alive": local_keep_alive(),
-        "options": {
-            "num_ctx": local_num_ctx(&system),
-            "num_predict": max_tokens.unwrap_or(320),
-            "temperature": 0.6
-        }
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(240))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let res = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("local brain unreachable at {}: {} (is Ollama running?)", base, e))?;
-    if !res.status().is_success() {
-        let code = res.status();
-        let txt = res.text().await.unwrap_or_default();
-        return Err(local_error_message(code, &txt));
-    }
-    use futures_util::StreamExt;
-    let mut stream = res.bytes_stream();
-    let mut buf = String::new();
-    let mut full = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(nl) = buf.find('\n') {
-            let line = buf[..nl].trim().to_string();
-            buf = buf[nl + 1..].to_string();
-            if line.is_empty() { continue; }
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                if let Some(tok) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
-                    if !tok.is_empty() {
-                        full.push_str(tok);
-                        let _ = app.emit("robert://token", serde_json::json!({"id": req_id, "text": full}));
-                    }
-                }
-                if v.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
-                    let _ = app.emit("robert://token", serde_json::json!({"id": req_id, "text": full, "done": true}));
-                }
-            }
-        }
-    }
-    Ok(full.trim().to_string())
 }
 
 /// Load the local model and evaluate the grounding prefix before the first
