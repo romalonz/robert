@@ -36,6 +36,7 @@ import {
   CONVERT_SYSTEM,
   SOLVE_SYSTEM,
   MEETING_PRESENCE,
+  HUMANIZE,
 } from "@/lib/prompts";
 
 // Conversation type, which tunes how eagerly Robert speaks.
@@ -776,6 +777,9 @@ export const useRobert = () => {
         // Regular meetings (group + 1:1) only, never interviews: project command
         // of my work + reliable, low-maintenance delivery, grounded in my notes.
         (type !== "interview" ? MEETING_PRESENCE + "\n" : "") +
+        // Every live answer, interview AND meeting: strip the AI tells, keep it
+        // sounding like a real person talking.
+        HUMANIZE + "\n" +
         (fmt
           ? `- ANSWER FORMAT (non-negotiable, overrides the sentence rules below): ${fmt.text.replace(/\s+/g, " ")}\n` +
             (narrative && cap

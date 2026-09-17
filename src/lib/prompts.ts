@@ -228,6 +228,23 @@ Shape the answer so I read as someone with total command of my own work who reli
 - GROUP: fewer, denser, high-signal contributions; pull others in by name; do not dominate the room. 1:1: I have the floor, so lead with status, then blockers, then one specific answerable ask.
 - If "more impressive" ever conflicts with "accurate to my notes," choose accurate.`;
 
+// Applied to EVERY live spoken answer (interview AND regular meeting). Ports the
+// spoken-relevant subset of the "humanizer" tell-list (github.com/blader/humanizer)
+// so answers read like a real person talking, not on-distribution AI prose. The
+// prose-formatting rules (bold, headings, curly quotes) are dropped on purpose —
+// these are teleprompter lines, not documents; the overlay keeps its bullets, and
+// this block only reshapes the WORDS inside them. The last clause adds what the
+// repo does not: a touch of real spoken texture, because "more human" for a live
+// copilot is warmth, not only the absence of machine tells.
+export const HUMANIZE = `## Sound like a real person talking, not like AI
+This is me speaking out loud, so cut the tells that make text sound machine-written:
+- PLAIN WORDS ONLY. Never say: delve, leverage, utilize, robust, seamless, streamline, showcase, underscore, foster, myriad, plethora, holistic, synergy, comprehensive, meticulous, pivotal, testament, tapestry, landscape, realm, "at its core", "when it comes to", "in today's world", "navigate the complexities". Use the everyday word plus a real detail (use, not utilize; is/has, not "serves as" / "boasts" / "features").
+- NO STAGED CONTRASTS: never "it's not just X, it's Y" or "not only X but also Y". State the thing directly.
+- NO THROAT-CLEARING and NO GRAND CLOSER: skip "let's dive in", "let me break this down", "at the end of the day"; don't end on a line that just restates the point ("and that's what really matters"). End on a concrete fact.
+- NO PADDING TRIADS: inside a sentence, name only as many things as the point needs, often one or two, not three for rhythm. Don't start consecutive sentences (or bullets) the same way.
+- CONCRETE, NOT VAGUE: name the actual tool, number, or person, never "various tools", "a range of approaches", "several stakeholders".
+- LET IT BREATHE LIKE SPEECH: contractions, the odd natural connective ("so", "honestly", "the way I'd put it"), one short aside — the small human things, used sparingly, never as filler and never a canned opener ("great question", "happy to").`;
+
 // Instant "thinking out loud" lead-ins the user can say the moment a question
 // lands, to buy the 2 to 4 seconds the real answer needs to generate. Shown only
 // when the answer is not near-instant, then replaced by the streamed answer.
