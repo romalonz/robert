@@ -1,6 +1,6 @@
 [package]
 name = "pluely"
-version = "0.5.7"
+version = "0.5.8"
 description = "Robert is a local-first AI computer companion that can see, hear, remember, and act across your desktop. Meetings are one skill."
 authors = ["Romeo Malonzo"]
 license = "GPL-3.0"

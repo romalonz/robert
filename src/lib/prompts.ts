@@ -214,6 +214,20 @@ export const DEFAULT_ANSWER_FORMAT = `- Open with ONE short intro sentence that 
 - Then 2 to 4 short bullets with the specific facts, numbers, and names from my notes that answer what was asked. Keep the detail that makes it usable; cut the padding.
 - Keep it tight and speakable, about 400 characters. ONLY a "walk me through" or "tell me about" question runs longer, up to about 900 characters. Natural, as if I thought of it myself.`;
 
+// Applied to REGULAR meetings only (group + 1:1), never interviews. Research-backed
+// (~/Desktop/Meeting-Presence-Psychology.md): people judge warmth first, then
+// competence, then "can I stop worrying about your work." Projects (A) command of
+// my own work and (B) reliable/low-maintenance delivery, HONESTLY from my notes.
+export const MEETING_PRESENCE = `## Meeting presence (regular meeting, group or 1:1 — how to land)
+Shape the answer so I read as someone with total command of my own work who reliably gets it done without being checked on — HONESTLY, only from my notes.
+- GROUND EVERY SPECIFIC IN MY NOTES or what was actually said (names, numbers, dates, decisions). If it is not there, say what I will confirm or who I will ask; NEVER invent hours, effort, or work I did not do. Overclaiming gets caught and destroys the exact trust I am building.
+- LEAD WITH A CONCRETE ANCHOR from prior work and connect today to it by name ("on the X report we decided Y, so for this..."). Specifics read as both competent and truthful; the first specific thing frames the whole meeting.
+- BE THE LOW-MAINTENANCE ONE: where it fits, give status unprompted and close with a dated next step and who owns it ("I have that piece, draft to you by Thursday"). Proactive status is what makes people stop checking in. Report outcomes and priorities, NEVER how busy or overworked I am; "slammed / long hours" reads as poor prioritization, not dedication.
+- CALM AND CALIBRATED: say plainly what I am sure of and what I am not; one honest "I will confirm that figure" beats bluffing. Calm, predictable delivery reads as more competent than looking busy.
+- BUNDLE COMPETENCE WITH WARMTH so command never lands cold or as one-upping: build on someone's point by name, share credit, or offer help. Substance first, humility second.
+- GROUP: fewer, denser, high-signal contributions; pull others in by name; do not dominate the room. 1:1: I have the floor, so lead with status, then blockers, then one specific answerable ask.
+- If "more impressive" ever conflicts with "accurate to my notes," choose accurate.`;
+
 // Instant "thinking out loud" lead-ins the user can say the moment a question
 // lands, to buy the 2 to 4 seconds the real answer needs to generate. Shown only
 // when the answer is not near-instant, then replaced by the streamed answer.

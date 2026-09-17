@@ -35,6 +35,7 @@ import {
   MEMORY_RULES,
   CONVERT_SYSTEM,
   SOLVE_SYSTEM,
+  MEETING_PRESENCE,
 } from "@/lib/prompts";
 
 // Conversation type, which tunes how eagerly Robert speaks.
@@ -772,6 +773,9 @@ export const useRobert = () => {
         groupBlock +
         readHint +
         `${typeRule}\n` +
+        // Regular meetings (group + 1:1) only, never interviews: project command
+        // of my work + reliable, low-maintenance delivery, grounded in my notes.
+        (type !== "interview" ? MEETING_PRESENCE + "\n" : "") +
         (fmt
           ? `- ANSWER FORMAT (non-negotiable, overrides the sentence rules below): ${fmt.text.replace(/\s+/g, " ")}\n` +
             (narrative && cap
